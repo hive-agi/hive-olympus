@@ -1,0 +1,7 @@
+{:project-id "hive-olympus"
+ :parent "hive"
+ :description "Vessel-agnostic Olympus core: one canonical agent grid, projected into every hive-vessel harness as panels"
+ :license "MIT"
+ :language :clojure
+ :tags [:hive :olympus :addon :vessel :foss]
+ :carto {:source-roots ["src" "test" "resources" "dev"]}}

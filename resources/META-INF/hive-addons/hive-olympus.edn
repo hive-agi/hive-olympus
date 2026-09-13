@@ -1,0 +1,11 @@
+{:addon/id "hive.olympus"
+ :addon/kind :addon
+ :addon/type :native
+ :addon/version "0.1.0-SNAPSHOT"
+ :addon/init-ns "hive-olympus.addon"
+ :addon/init-fn "addon-ctor"
+ :addon/config {:olympus/refresh-ms 2000}
+ :addon/capabilities #{:olympus :presenter-seat :health-reporting}
+ :addon/description "Olympus core: the live agent roster laid out on one canonical grid and published as hive-vessel panels (one per tab) to every registered harness presenter"
+ :addon/maturity :experimental
+ :addon/trust-class :foss}
