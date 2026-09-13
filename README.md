@@ -50,6 +50,18 @@ At each delivery the brick picks the first route that resolves:
 2. The host's `:vessel/dispatch!` hook.
 3. The host's `:vessel/target` hook, lowered through hive-vessel's standard registry.
 
+The core loads hive-vessel lazily and does not depend on it. A host that exposes a
+vessel hook already has hive-vessel on the classpath. A host reached through
+`:olympus/target-resolver` may not (hive.emacs does not), so that brick must declare
+`io.github.hive-agi/hive-vessel` in its own deps.edn, or it mounts with no route.
+
+| Brick | Host hooks | Route |
+|---|---|---|
+| hive-olympus-deepseek | `:vessel/dispatch!` + `:vessel/target` | host dispatch |
+| hive-olympus-vim | `:vessel/dispatch!` + `:vessel/target` | host dispatch |
+| hive-olympus-vscode | `:vessel/target` | host target |
+| hive-olympus-emacs | none | `eval-port-target` over `hive-emacs.client/eval-elisp!` |
+
 ## Develop
 
 ```
