@@ -8,7 +8,10 @@
      :olympus/addon-id                          default: \"hive.olympus.\" + host id
                                                 without its \"hive.\" prefix
      :olympus/target-resolver                   optional qualified symbol of
-                                                (fn [config] -> hive-vessel Target | nil)
+                                                (fn [config] -> hive-vessel Target | nil);
+                                                `eval-port-target` is the built-in one for
+                                                hosts reached through an eval fn
+                                                (:olympus/eval-fn, :olympus/dialect)
 
    with :addon/dependencies #{\"hive.olympus\" <host>}.
 
@@ -100,6 +103,26 @@
   "Addon id for the harness projecting Olympus into HOST-ID."
   [host-id]
   (str olympus-addon-id "." (str/replace-first (str host-id) #"^hive\." "")))
+
+(defn eval-port-target
+  "A :olympus/target-resolver for hosts reached through an eval port rather
+   than vessel hooks. Reads :olympus/eval-fn (qualified symbol of
+   (fn [payload] -> result)), :olympus/dialect (a hive-vessel dialect keyword)
+   and optional :olympus/vessel-id. Returns a hive-vessel Target, or nil when
+   the eval fn does not resolve. A result map carrying :error throws."
+  [config]
+  (let [dialect (some-> (:olympus/dialect config) keyword)
+        eval! (some-> (:olympus/eval-fn config) symbol safe-resolve)]
+    (when (and dialect eval!)
+      {:vessel/id (keyword (or (:olympus/vessel-id config) (name dialect)))
+       :vessel/dialect dialect
+       :vessel/features #{}
+       :vessel/execute! (fn [{:native/keys [payload]}]
+                          (let [result (eval! payload)]
+                            (when (and (map? result) (:error result))
+                              (throw (ex-info "olympus: eval port answered an error"
+                                              {:reason :eval-failed :error (:error result)})))
+                            result))})))
 
 (defn presenter-target
   "The presenter target (fn [ops]) for CONFIG. Each call resolves the host

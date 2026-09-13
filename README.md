@@ -44,7 +44,9 @@ marks that presenter degraded and it is retried on the next refresh.
 At each delivery the brick picks the first route that resolves:
 
 1. `:olympus/target-resolver` (a qualified symbol, `(fn [config] -> hive-vessel Target)`),
-   lowered through hive-vessel's standard registry. For hosts with no vessel hooks.
+   lowered through hive-vessel's standard registry. For hosts with no vessel hooks;
+   the built-in `hive-olympus.harness/eval-port-target` covers an eval-port host
+   from config alone (`:olympus/eval-fn`, `:olympus/dialect`).
 2. The host's `:vessel/dispatch!` hook.
 3. The host's `:vessel/target` hook, lowered through hive-vessel's standard registry.
 

@@ -87,6 +87,36 @@
       (is (string? (:native/payload (first @emacs-natives))))
       (finally (addon/shutdown! h) (addon/shutdown! core)))))
 
+(def eval-port-payloads (atom []))
+
+(defn fake-eval-elisp! [payload]
+  (swap! eval-port-payloads conj payload)
+  "ok")
+
+(deftest an-eval-port-host-is-manifest-only-through-the-built-in-resolver
+  (reset! eval-port-payloads [])
+  (let [roster (atom (t/agents 1))
+        core (olympus! roster)
+        host (t/->StubAddon "hive.emacs" {})
+        [h init] (harness! core "hive.emacs" host
+                           {:olympus/target-resolver 'hive-olympus.harness/eval-port-target
+                            :olympus/eval-fn 'hive-olympus.harness-test/fake-eval-elisp!
+                            :olympus/dialect :elisp})]
+    (try
+      (is (:success? init))
+      (is (= :configured-resolver (get-in (addon/health h) [:details :route])))
+      (is (= 1 (count @eval-port-payloads)))
+      (is (string? (first @eval-port-payloads)) "the :elisp dialect lowers the panel to source")
+      (is (= :live (get-in (addon/health core) [:details :presenters "hive.emacs" :status])))
+      (finally (addon/shutdown! h) (addon/shutdown! core))))
+  (testing "an unresolvable eval fn is no target; an :error answer throws"
+    (is (nil? (sut/eval-port-target {:olympus/eval-fn 'no.such/fn :olympus/dialect :elisp})))
+    (let [target (sut/eval-port-target {:olympus/eval-fn 'clojure.core/identity :olympus/dialect "elisp"})]
+      (is (= {:vessel/id :elisp :vessel/dialect :elisp :vessel/features #{}}
+             (dissoc target :vessel/execute!)))
+      (is (thrown? clojure.lang.ExceptionInfo
+                   ((:vessel/execute! target) {:native/payload {:error :timeout}}))))))
+
 (deftest route-precedence
   (let [[_ dispatch!] (t/recorder)
         [_ vessel] (recording-vessel :json)
