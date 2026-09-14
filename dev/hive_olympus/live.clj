@@ -5,7 +5,8 @@
   (:require [hive-addon.protocol :as addon]
             [hive-olympus.addon :as olympus]
             [hive-olympus.harness :as harness]
-            [hive-olympus.view :as view]))
+            [hive-olympus.view :as view]
+            [hive-olympus.demo :as demo]))
 
 (defn registered
   "The live addon instance registered under ID."
@@ -17,31 +18,10 @@
   [id]
   (addon/hooks (registered id)))
 
-(def stub-routes
-  "provider/model pairs a stub agent cycles through."
-  [["venice" "deepseek-v4-flash"] ["axon" "glm-5.3-flash"] ["openrouter" "moonshotai/kimi-k2.6"]])
-
 (defn stub-roster
-  "N agents cycling through every status and three provider routes, with the
-   facts a live roster carries (mode, project, activity, seen). Every fifth is
-   an exited agent showing how it ended."
+  "The demo roster of N agents (hive-olympus.demo/roster)."
   [n]
-  (mapv (fn [i]
-          (let [[provider model] (nth stub-routes (mod i (count stub-routes)))
-                exited? (zero? (mod i 5))]
-            (cond-> {:agent/id (str "demo-" i)
-                     :agent/name (str "demo-" i)
-                     :agent/status (if exited? :error (nth [:working :blocked :error :idle :spawning] (mod i 5)))
-                     :agent/kind :ling
-                     :agent/provider provider
-                     :agent/model model
-                     :agent/mode "hive-agent"
-                     :agent/project "hive-olympus"
-                     :agent/seen (str (mod i 4) "m ago")}
-              (even? i) (assoc :agent/task (str "task " i))
-              (odd? i) (assoc :agent/activity (str "turn " i ": tool_calls=[read_file]"))
-              exited? (assoc :agent/exited? true :agent/activity (str provider " API error: 402")))))
-        (range 1 (inc n))))
+  (demo/roster n))
 
 (defn stub-demo!
   "Mount a throwaway core over a stub roster of N agents plus a harness onto
