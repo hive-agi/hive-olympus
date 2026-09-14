@@ -66,6 +66,15 @@
     (testing "renders stay hive-vessel ops"
       (is (m/validate vs/ShowPanel panel)))))
 
+(deftest an-exited-agent-says-so-under-its-final-status
+  (let [[panel] (render [{:agent/id "x" :agent/name "scout" :agent/status :error :agent/exited? true
+                          :agent/activity "Loop failed: axon API error: 402"}]
+                        model/initial-state)
+        blocks (get-in panel [:doc :doc/blocks])]
+    (is (= {:block/type :para :text "error  (exited)" :tone :error} (second blocks)))
+    (is (= [["id" "x"] ["activity" "Loop failed: axon API error: 402"] ["cell" "row 1, col 1"]]
+           (:fields (nth blocks 2))))))
+
 (deftest the-empty-roster-still-shows-a-panel
   (is (= [{:op :ui/show-panel
            :panel/id "olympus/tab-1"

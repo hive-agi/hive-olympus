@@ -17,14 +17,30 @@
   [id]
   (addon/hooks (registered id)))
 
+(def stub-routes
+  "provider/model pairs a stub agent cycles through."
+  [["venice" "deepseek-v4-flash"] ["axon" "glm-5.3-flash"] ["openrouter" "moonshotai/kimi-k2.6"]])
+
 (defn stub-roster
-  "N agents cycling through every status."
+  "N agents cycling through every status and three provider routes, with the
+   facts a live roster carries (mode, project, activity, seen). Every fifth is
+   an exited agent showing how it ended."
   [n]
   (mapv (fn [i]
-          (cond-> {:agent/id (str "demo-" i)
-                   :agent/name (str "demo-" i)
-                   :agent/status (nth [:working :blocked :error :idle :spawning] (mod i 5))}
-            (even? i) (assoc :agent/task (str "task " i))))
+          (let [[provider model] (nth stub-routes (mod i (count stub-routes)))
+                exited? (zero? (mod i 5))]
+            (cond-> {:agent/id (str "demo-" i)
+                     :agent/name (str "demo-" i)
+                     :agent/status (if exited? :error (nth [:working :blocked :error :idle :spawning] (mod i 5)))
+                     :agent/kind :ling
+                     :agent/provider provider
+                     :agent/model model
+                     :agent/mode "hive-agent"
+                     :agent/project "hive-olympus"
+                     :agent/seen (str (mod i 4) "m ago")}
+              (even? i) (assoc :agent/task (str "task " i))
+              (odd? i) (assoc :agent/activity (str "turn " i ": tool_calls=[read_file]"))
+              exited? (assoc :agent/exited? true :agent/activity (str provider " API error: 402")))))
         (range 1 (inc n))))
 
 (defn stub-demo!

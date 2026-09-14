@@ -6,6 +6,8 @@
      :olympus/refresh-ms  poll period in ms (default 2000; <= 0 disables the loop)
      :olympus/roster-fn   0-arity fn -> seq of Agent, or a qualified symbol
                           naming one (default: the live swarm adapter)
+     :olympus/linger-ms   how long the live adapter keeps an agent that left
+                          the swarm, showing how it ended (default 120000; 0 off)
 
    Hooks (active only):
      :olympus/register-presenter!    (fn [id target]) -> id | nil
@@ -35,7 +37,7 @@
       (fn? f) f
       (symbol? f) (let [v (requiring-resolve f)] (fn [] (v)))
       (string? f) (let [v (requiring-resolve (symbol f))] (fn [] (v)))
-      :else (roster/live-roster-fn on-warning))))
+      :else (roster/live-roster-fn on-warning nil nil (:olympus/linger-ms config)))))
 
 (defn- refresh-locked!
   "Poll, render and broadcast. Caller holds the state lock."

@@ -88,3 +88,68 @@
       (is (= "turn 3: tool_calls=[\"glob_files\"]" (:agent/activity a)))
       (is (nil? (:agent/activity b)))
       (is (= "4m ago" (:agent/seen b))))))
+
+(def axon-failure
+  "The shouts a hive-agent ling leaves when its provider refuses the first call."
+  [{:event-type :started :timestamp 1000 :message "bb-ling spawn"}
+   {:event-type :progress :timestamp 2000
+    :message (str "bb-ling turn 1 " dash " error: {:reason :llm/call-failed, :status 402, :message \"axon API error: 402\"}")}
+   {:event-type :error :timestamp 3000 :message (str "bb-ling exit " dash " variant=error turns=1")}
+   {:event-type :failed :timestamp 3100 :message "Loop failed: {:status 402, :body \"{}\", :message \"axon API error: 402\"}"}
+   {:event-type :error :timestamp 3200 :message "Agent scout-axon failed: unknown error"}])
+
+(deftest the-final-shout-prefers-failure-then-error-then-completion
+  (is (= 3100 (:timestamp (roster/final-shout axon-failure))))
+  (is (= 3200 (:timestamp (roster/final-shout (remove #(= :failed (:event-type %)) axon-failure)))))
+  (is (= 9 (:timestamp (roster/final-shout [{:event-type :completed :timestamp 9} {:event-type :progress :timestamp 10}]))))
+  (is (= 10 (:timestamp (roster/final-shout [{:event-type :progress :timestamp 10} {:timestamp 4}]))))
+  (is (nil? (roster/final-shout []))))
+
+(deftest a-failure-shout-reads-as-its-embedded-message
+  (is (= "Loop failed: axon API error: 402"
+         (:agent/activity (roster/slave->agent venice-slave (roster/final-shout axon-failure) nil)))
+      "a message that already says failed is not prefixed again")
+  (is (= "turn 1: error: axon API error: 402"
+         (:agent/activity (roster/slave->agent venice-slave (second axon-failure) nil)))))
+
+(deftest a-departed-agent-lingers-with-how-it-ended
+  (let [alive {:agent/id "a" :agent/name "a" :agent/status :working :agent/drones 1}
+        other {:agent/id "b" :agent/name "b" :agent/status :idle}
+        shouts-of {"a" axon-failure}
+        t0 (roster/settle {:previous [] :ghosts {}} [alive other] shouts-of 10000 60000)
+        t1 (roster/settle t0 [other] shouts-of 20000 60000)
+        t2 (roster/settle t1 [other] shouts-of 50000 60000)
+        t3 (roster/settle t2 [other] shouts-of 80001 60000)]
+    (is (= [alive other] (:roster t0)))
+    (testing "the agent that left is shown after the live ones, exited, as it failed"
+      (is (= [other {:agent/id "a" :agent/name "a" :agent/status :error :agent/exited? true
+                     :agent/activity "Loop failed: axon API error: 402" :agent/seen "<1m ago"}]
+             (:roster t1)))
+      (is (m/validate s/Roster (:roster t1))))
+    (testing "it stays for the linger window, aging, then leaves"
+      (is (= ["b" "a"] (mapv :agent/id (:roster t2))))
+      (is (= [other] (:roster t3))))
+    (testing "an agent that comes back is live again, not a ghost"
+      (let [back (roster/settle t1 [alive other] shouts-of 30000 60000)]
+        (is (= [alive other] (:roster back)))
+        (is (empty? (:ghosts back)))))
+    (testing "a completed agent lingers idle"
+      (let [done [{:event-type :completed :timestamp 15000 :message "Agent a completed: all good"}]
+            t (roster/settle t0 [other] {"a" done} 20000 60000)]
+        (is (= {:agent/status :idle :agent/activity "Agent a completed: all good"}
+               (select-keys (last (:roster t)) [:agent/status :agent/activity])))))))
+
+(deftest the-live-adapter-lingers-unless-disabled
+  (let [slaves (atom [venice-slave])
+        clock (atom 100000)
+        resolve (fn [sym] (condp = sym
+                            roster/live-source (fn [] @slaves)
+                            roster/activity-source (constantly axon-failure)
+                            nil))
+        lingering (roster/live-roster-fn (fn [_]) resolve #(deref clock) 60000)
+        plain (roster/live-roster-fn (fn [_]) resolve #(deref clock) 0)]
+    (lingering) (plain)
+    (reset! slaves [])
+    (swap! clock + 1000)
+    (is (= [:error] (mapv :agent/status (lingering))))
+    (is (= [] (plain)))))

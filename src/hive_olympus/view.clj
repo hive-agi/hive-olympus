@@ -58,14 +58,16 @@
 (defn cell-blocks
   "Blocks for one grid cell: heading, toned status para, fields."
   [{:cell/keys [row col agent focused?]}]
-  (let [{:agent/keys [id name status kind]} agent]
+  (let [{:agent/keys [id name status kind exited?]} agent]
     [{:block/type :heading
       :level 2
       :text (str (when focused? "> ")
                  (if (str/blank? name) id name)
                  (when (= :drone kind) "  (drone)"))}
      {:block/type :para
-      :text (str (clojure.core/name status) (when focused? "  (focused)"))
+      :text (str (clojure.core/name status)
+                 (when exited? "  (exited)")
+                 (when focused? "  (focused)"))
       :tone (status-tone status)}
      {:block/type :fields
       :fields (conj (agent-fields agent)

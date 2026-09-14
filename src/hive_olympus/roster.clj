@@ -93,10 +93,14 @@
   (re-pattern (str "\\s+" (char 0x2014) "\\s+")))
 
 (defn- activity-text [{:keys [event-type message]}]
-  (let [msg (some-> message
+  (let [raw (some-> message
                     (str/replace #"^bb-ling\s+" "")
-                    (str/replace shout-separator ": ")
-                    clip)
+                    (str/replace shout-separator ": "))
+        ;; A failure shout embeds the error map; its :message is the readable part.
+        inner (some->> raw (re-seq #":message \"([^\"]+)\"") last second)
+        msg (clip (if (and inner (str/includes? raw "{"))
+                    (str (first (str/split raw #"\{" 2)) inner)
+                    raw))
         event (some-> event-type name)]
     (cond
       (and msg event (not= "progress" event) (not (str/includes? (str/lower-case msg) event)))
@@ -161,22 +165,89 @@
                lings)
          (into (remove #(contains? ling-ids (:agent/parent %))) drones)))))
 
+(def default-linger-ms
+  "How long an agent that left the swarm stays visible with its final event."
+  120000)
+
+(def ^:private final-event-rank
+  "Which shout best says how an agent ended: a failure over an error report
+   over a completion over anything else."
+  {:failed 3 :error 2 :completed 1})
+
+(defn final-shout
+  "The shout of SHOUTS that best says how the agent ended, or nil: the latest
+   failure, else the latest error report, else the latest completion, else the
+   latest shout."
+  [shouts]
+  (when (seq shouts)
+    (let [rank #(get final-event-rank (:event-type %) 0)
+          best (apply max (map rank shouts))]
+      (latest-shout (filter #(= best (rank %)) shouts)))))
+
+(defn exited-agent
+  "AGENT as last observed, marked exited, with status and activity from its
+   final SHOUT (a failure reads as :error, anything else as :idle)."
+  [agent shout now]
+  (let [failed? (contains? #{:failed :error} (:event-type shout))
+        activity (activity-text shout)]
+    (cond-> (-> agent
+                (assoc :agent/exited? true :agent/status (if failed? :error :idle))
+                (dissoc :agent/drones))
+      activity (assoc :agent/activity activity)
+      (and now (:timestamp shout)) (assoc :agent/seen (seen-text (- now (:timestamp shout)))))))
+
+(defn settle
+  "One roster tick with linger. STATE is {:previous agents :ghosts {id ghost}}
+   from the last tick; CURRENT the agents observed now. An agent present last
+   tick and absent now becomes a ghost built from its final shout; a ghost
+   leaves after LINGER-MS or when its id is observed again. Returns the next
+   state with :roster, the current agents followed by the ghosts, oldest
+   departure first."
+  [{:keys [previous ghosts]} current shouts-of now linger-ms]
+  (let [cur-ids (into #{} (map :agent/id) current)
+        departed (for [a previous
+                       :let [id (:agent/id a)]
+                       :when (and (not (:agent/exited? a))
+                                  (not (contains? cur-ids id))
+                                  (not (contains? ghosts id)))]
+                   [id {:agent a :since now}])
+        ghosts (->> (into (or ghosts {}) departed)
+                    (remove (fn [[id {:keys [since]}]]
+                              (or (contains? cur-ids id) (> (- now since) linger-ms))))
+                    (into {}))
+        shown (->> ghosts
+                   (sort-by (fn [[id {:keys [since]}]] [since id]))
+                   (mapv (fn [[id {:keys [agent]}]]
+                           (exited-agent agent (final-shout (shouts-of id)) now))))]
+    {:previous current
+     :ghosts ghosts
+     :roster (into (vec current) shown)}))
+
 (defn live-roster-fn
   "Roster fn over the live swarm. RESOLVE is (fn [sym] -> fn or nil), default
    `requiring-resolve` guarded; ON-WARNING receives a message string (or nil
-   once the source resolves again). CLOCK is a 0-arity epoch-ms fn."
+   once the source resolves again). CLOCK is a 0-arity epoch-ms fn. An agent
+   that leaves the swarm lingers LINGER-MS (default `default-linger-ms`, 0
+   disables) showing how it ended."
   ([on-warning] (live-roster-fn on-warning nil))
   ([on-warning resolve] (live-roster-fn on-warning resolve nil))
-  ([on-warning resolve clock]
+  ([on-warning resolve clock] (live-roster-fn on-warning resolve clock nil))
+  ([on-warning resolve clock linger-ms]
    (let [resolve (or resolve (fn [sym] (try (requiring-resolve sym) (catch Throwable _ nil))))
-         clock (or clock #(System/currentTimeMillis))]
+         clock (or clock #(System/currentTimeMillis))
+         linger-ms (long (or linger-ms default-linger-ms))
+         state (atom {:previous [] :ghosts {}})]
      (fn []
        (if-let [get-all-slaves (resolve live-source)]
          (let [messages (resolve activity-source)
                shouts-of (if messages
                            (fn [id] (try (messages id) (catch Throwable _ nil)))
                            (constantly nil))
-               result (agents (get-all-slaves) shouts-of (clock))]
+               now (clock)
+               current (agents (get-all-slaves) shouts-of now)
+               result (if (pos? linger-ms)
+                        (:roster (swap! state settle current shouts-of now linger-ms))
+                        current)]
            (on-warning nil)
            result)
          (do (on-warning (str "roster source " live-source " unavailable; showing no agents"))

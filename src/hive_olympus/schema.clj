@@ -18,7 +18,8 @@
 (def Agent
   "An observed swarm member. Only id, name and status are required; every
    other key is what the roster source could tell, and the view shows only
-   what is present."
+   what is present. :agent/exited? marks an agent that already left the swarm
+   and is still shown with how it ended."
   [:map
    [:agent/id AgentId]
    [:agent/name :string]
@@ -33,7 +34,8 @@
    [:agent/activity {:optional true} :string]
    [:agent/seen {:optional true} :string]
    [:agent/done {:optional true} nat-int?]
-   [:agent/drones {:optional true} nat-int?]])
+   [:agent/drones {:optional true} nat-int?]
+   [:agent/exited? {:optional true} :boolean]])
 
 (def Roster
   [:vector {:gen/max 12} Agent])
