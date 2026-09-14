@@ -1,5 +1,14 @@
 # hive-olympus
 
+[![Clojars Project](https://img.shields.io/clojars/v/io.github.hive-agi/hive-olympus.svg)](https://clojars.org/io.github.hive-agi/hive-olympus)
+[![release](https://github.com/hive-agi/hive-olympus/actions/workflows/release.yml/badge.svg)](https://github.com/hive-agi/hive-olympus/actions/workflows/release.yml)
+
+```clojure
+io.github.hive-agi/hive-olympus {:mvn/version "RELEASE"}
+```
+
+Pin the version from the Clojars badge.
+
 Olympus for every vessel. One vessel-agnostic core (`hive.olympus`) owns the
 agent grid; every harness (dsh, Vim, VS Code, Emacs) shows it through a
 manifest-only brick.
@@ -67,6 +76,19 @@ vessel hook already has hive-vessel on the classpath. A host reached through
 ```
 clojure -M:test                  # cold suite
 clojure -M:dev                   # REPL classpath (dev/ + test/)
+```
+
+## Releases
+
+Every push to `main` that changes `src/`, `resources/`, `test/`, `deps.edn`,
+`version.edn` or the workflow runs the suite. When it passes, CI bumps the
+patch version, regenerates `CHANGELOG.md`, tags `vX.Y.Z` and deploys to
+Clojars through [hive-build](https://github.com/hive-agi/hive-build). A red
+suite mints nothing. CI owns `VERSION`: do not bump it by hand.
+
+```
+clojure -T:build install         # jar into ~/.m2, no network
+clojure -T:build changelog       # what the next release notes will say
 ```
 
 MIT licensed.
