@@ -24,7 +24,8 @@
             [hive-olympus.model :as model]
             [hive-olympus.presenter :as presenter]
             [hive-olympus.roster :as roster]
-            [hive-olympus.view :as view])
+            [hive-olympus.view :as view]
+            [hive-olympus.operator :as operator])
   (:import (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit)))
 
 (def addon-id-value "hive.olympus")
@@ -40,18 +41,28 @@
       :else (roster/live-roster-fn on-warning nil nil (:olympus/linger-ms config)))))
 
 (defn- refresh-locked!
-  "Poll, render and broadcast. Caller holds the state lock."
+  "Refresh independent observations, render and broadcast. Caller holds the state lock."
   [state]
-  (let [{:keys [roster-fn seat olympus]} @state]
+  (let [{:keys [roster-fn seat olympus operator-room]} @state]
     (try
-      (let [agents (vec (roster-fn))
-            grid (model/grid-model agents @olympus)
-            current (view/panels grid)]
-        (swap! state assoc :roster agents :model grid :panels current :roster-error nil)
-        (presenter/broadcast! seat current))
+      (let [agents (vec (roster-fn))]
+        (swap! state assoc :roster agents :roster-error nil))
       (catch Throwable t
-        (swap! state assoc :roster-error (or (ex-message t) (str t)))
-        (presenter/broadcast! seat (:panels @state))))
+        (swap! state assoc :roster-error (or (ex-message t) (str t)))))
+    (when operator-room
+      (try
+        (swap! state assoc :operator-snapshot ((:snapshot operator-room)) :operator-error nil)
+        (catch Throwable t
+          (swap! state assoc :operator-error (or (ex-message t) (str t))))))
+    (let [{:keys [roster operator-snapshot operator-error]} @state
+          grid (model/grid-model roster @olympus)
+          current (cond-> (view/panels grid)
+                    operator-room
+                    (conj (operator/panel
+                           (cond-> (or operator-snapshot {:requests [] :events []})
+                             operator-error (update :unavailable (fnil conj []) :snapshot)))))]
+      (swap! state assoc :model grid :panels current)
+      (presenter/broadcast! seat current))
     (presenter/status seat)))
 
 (defn- navigate! [state f]
@@ -69,14 +80,30 @@
         (.setDaemon true)))))
 
 (defn- start-loop [state refresh-ms]
-  (when (pos? refresh-ms)
-    (doto (Executors/newSingleThreadScheduledExecutor (daemon-factory))
+  (let [executor (Executors/newSingleThreadScheduledExecutor (daemon-factory))]
+    (when (pos? refresh-ms)
       (.scheduleWithFixedDelay
+       executor
        (fn [] (try (locking state
                      (when (= :active (:lifecycle @state))
                        (refresh-locked! state)))
                    (catch Throwable _ nil)))
-       (long refresh-ms) (long refresh-ms) TimeUnit/MILLISECONDS))))
+       (long refresh-ms) (long refresh-ms) TimeUnit/MILLISECONDS))
+    executor))
+
+(defn- request-refresh! [state]
+  (let [{:keys [executor refresh-pending]} @state]
+    (when (and executor refresh-pending (compare-and-set! refresh-pending false true))
+      (try
+        (.execute ^ScheduledExecutorService executor
+                  (fn []
+                    (reset! refresh-pending false)
+                    (locking state
+                      (when (and (= :active (:lifecycle @state))
+                                 (identical? executor (:executor @state)))
+                        (refresh-locked! state)))))
+        (catch java.util.concurrent.RejectedExecutionException _
+          (reset! refresh-pending false))))))
 
 (defn- start! [state seed runtime-config]
   (locking state
@@ -92,13 +119,22 @@
                          :roster-fn (roster-fn-of config warn!)
                          :olympus (atom model/initial-state)
                          :seat seat
+                         :refresh-pending (atom false)
                          :roster []
                          :panels (view/panels (model/grid-model [] model/initial-state))})
-          (refresh-locked! state)
           (swap! state assoc :executor (start-loop state refresh-ms))
+          (when (get config :olympus/operator-room?
+                     (or (contains? config :olympus/operator-sources)
+                         (not (contains? config :olympus/roster-fn))))
+            (swap! state assoc :operator-room
+                   (operator/open config (fn [] (request-refresh! state)))))
+          (refresh-locked! state)
           {:success? true :metadata {:refresh-ms refresh-ms
                                      :agents (count (:roster @state))}})
         (catch Throwable t
+          (when-let [close (get-in @state [:operator-room :close])] (close))
+          (when-let [executor (:executor @state)]
+            (.shutdownNow ^ScheduledExecutorService executor))
           (reset! state {:lifecycle :failed :last-error (or (ex-message t) (str t))})
           {:success? false :errors [(or (ex-message t) (str t))]})))))
 
@@ -108,6 +144,7 @@
       (.shutdownNow executor)
       (.awaitTermination executor 2 TimeUnit/SECONDS))
     (locking state
+      (when-let [close (get-in @state [:operator-room :close])] (close))
       (when-let [close (some-> (:roster-fn @state) meta :olympus/close)]
         (try (close) (catch Throwable _ nil)))
       (reset! state {:lifecycle :stopped})
@@ -136,9 +173,9 @@
   (tools [_] [])
   (schema-extensions [_] [])
   (health [_]
-    (let [{:keys [lifecycle seat model refresh-ms roster-error roster-warning last-error]} @state
+    (let [{:keys [lifecycle seat model refresh-ms roster-error roster-warning operator-error operator-snapshot last-error]} @state
           presenters (if seat (presenter/status seat) {})
-          degraded? (or roster-error roster-warning
+          degraded? (or roster-error roster-warning operator-error (seq (:unavailable operator-snapshot))
                         (some #(= :degraded (:status %)) (vals presenters)))]
       {:status (case lifecycle
                  :active (if degraded? :degraded :ok)
@@ -150,7 +187,12 @@
                          :agents (get-in model [:grid/counts :total] 0)
                          :tabs (count (:grid/tabs model))
                          :layout (:grid/layout model)
-                         :presenters presenters)
+                         :presenters presenters
+                         :operator-room (when operator-snapshot
+                                          {:pending (count (:requests operator-snapshot))
+                                           :events (count (:events operator-snapshot))
+                                           :unavailable (:unavailable operator-snapshot)}))
+                  operator-error (assoc :operator-error operator-error)
                   roster-error (assoc :roster-error roster-error)
                   roster-warning (assoc :roster-warning roster-warning)
                   last-error (assoc :last-error last-error))}))
@@ -159,6 +201,10 @@
     (if (= :active (:lifecycle @state))
       {:olympus/register-presenter! (fn [id target] (register-presenter! state id target))
        :olympus/unregister-presenter! (fn [id] (unregister-presenter! state id))
+       :olympus/operator-snapshot (fn [] (:operator-snapshot @state))
+       :olympus/observe! (fn [event]
+                           (when-let [observe (get-in @state [:operator-room :observe!])]
+                             (observe event)))
        :olympus/state (fn [] (some-> (:olympus @state) deref))
        :olympus/model (fn [] (:model @state))
        :olympus/panels (fn [] (:panels @state))

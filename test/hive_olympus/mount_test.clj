@@ -42,7 +42,7 @@
     (try
       (is (:ok? report) (pr-str (:mounted report)))
       (is (= "hive.olympus.stubvessel" (last (:order report))))
-      (is (= [["olympus/tab-1"]] (mapv t/panel-ids @host-calls)))
+      (is (= [["olympus/tab-1" "olympus/operator"]] (mapv t/panel-ids @host-calls)))
       (is (= "No active agents" (-> @host-calls first first :doc :doc/blocks first :text)))
       (is (re-find #"unavailable" (get-in (addon/health core) [:details :roster-warning])))
       (is (= :ok (:status (addon/health harness))))

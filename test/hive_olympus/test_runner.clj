@@ -7,17 +7,13 @@
             [hive-olympus.mount-test]
             [hive-olympus.presenter-test]
             [hive-olympus.roster-test]
-            [hive-olympus.view-test]))
+            [hive-olympus.view-test]
+            [hive-olympus.operator-test]))
 
 (def test-namespaces
-  '[hive-olympus.layout-test
-    hive-olympus.model-test
-    hive-olympus.view-test
-    hive-olympus.roster-test
-    hive-olympus.presenter-test
-    hive-olympus.addon-test
-    hive-olympus.harness-test
-    hive-olympus.mount-test])
+  '[hive-olympus.layout-test hive-olympus.model-test hive-olympus.view-test
+    hive-olympus.roster-test hive-olympus.presenter-test hive-olympus.addon-test
+    hive-olympus.harness-test hive-olympus.mount-test hive-olympus.operator-test])
 
 (defn -main
   [& _]

@@ -72,7 +72,14 @@
 
 (hst/deftrifecta-from-schema grid-model
   hive-olympus.model/grid-model
-  {:in [:cat s/Roster s/OlympusState]
+  {:in [:cat
+         ;; Give empty, grid and tabbed rosters equal generator weight.
+         [:schema {:gen/schema [:or
+                                [:vector {:min 0 :max 0} s/Agent]
+                                [:vector {:min 1 :max 4} s/Agent]
+                                [:vector {:min 5 :max 12} s/Agent]]}
+          s/Roster]
+         s/OlympusState]
    :out s/GridModel
    :rel (fn [[roster state] grid]
           (let [n (count roster)
