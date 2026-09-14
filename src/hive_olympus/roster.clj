@@ -223,12 +223,42 @@
      :ghosts ghosts
      :roster (into (vec current) shown)}))
 
+(def registry-source
+  "Qualified symbol of the host's shout registry. The host drops an agent's
+   shouts the moment the agent exits, so the adapter watches this to keep
+   them for the linger window."
+  'hive-mcp.hivemind.state/agent-registry)
+
+(defn- messages-of [entry]
+  (or (:messages entry) (get-in entry [:data :messages])))
+
+(defn departures
+  "{agent-id messages} for the agents in registry map OLD that are absent from
+   NEW and had messages."
+  [old new]
+  (into {}
+        (keep (fn [[id entry]]
+                (when (and (not (contains? new id)) (seq (messages-of entry)))
+                  [(str id) (vec (messages-of entry))])))
+        old))
+
+(defn- watchable
+  "The IRef behind a resolved registry: a var of an atom, an atom, or a bounded
+   atom map holding one under :atom."
+  [x]
+  (let [x (if (var? x) @x x)]
+    (cond
+      (instance? clojure.lang.IRef x) x
+      (and (map? x) (instance? clojure.lang.IRef (:atom x))) (:atom x)
+      :else nil)))
+
 (defn live-roster-fn
   "Roster fn over the live swarm. RESOLVE is (fn [sym] -> fn or nil), default
    `requiring-resolve` guarded; ON-WARNING receives a message string (or nil
    once the source resolves again). CLOCK is a 0-arity epoch-ms fn. An agent
    that leaves the swarm lingers LINGER-MS (default `default-linger-ms`, 0
-   disables) showing how it ended."
+   disables) showing how it ended; its final shouts are kept by a watch on
+   the host shout registry, which the fn's :olympus/close metadata removes."
   ([on-warning] (live-roster-fn on-warning nil))
   ([on-warning resolve] (live-roster-fn on-warning resolve nil))
   ([on-warning resolve clock] (live-roster-fn on-warning resolve clock nil))
@@ -236,22 +266,40 @@
    (let [resolve (or resolve (fn [sym] (try (requiring-resolve sym) (catch Throwable _ nil))))
          clock (or clock #(System/currentTimeMillis))
          linger-ms (long (or linger-ms default-linger-ms))
-         state (atom {:previous [] :ghosts {}})]
-     (fn []
-       (if-let [get-all-slaves (resolve live-source)]
-         (let [messages (resolve activity-source)
-               shouts-of (if messages
-                           (fn [id] (try (messages id) (catch Throwable _ nil)))
-                           (constantly nil))
-               now (clock)
-               current (agents (get-all-slaves) shouts-of now)
-               result (if (pos? linger-ms)
-                        (:roster (swap! state settle current shouts-of now linger-ms))
-                        current)]
-           (on-warning nil)
-           result)
-         (do (on-warning (str "roster source " live-source " unavailable; showing no agents"))
-             []))))))
+         state (atom {:previous [] :ghosts {}})
+         departed (atom {})
+         watched (atom nil)
+         watch-key (keyword "hive-olympus.roster" (str "departures-" (System/identityHashCode state)))
+         watch! (fn []
+                  (when (and (pos? linger-ms) (nil? @watched))
+                    (when-let [ref (some-> (resolve registry-source) watchable)]
+                      (add-watch ref watch-key
+                                 (fn [_ _ old new]
+                                   (let [gone (departures old new)]
+                                     (when (seq gone)
+                                       (let [at (clock)]
+                                         (swap! departed into (map (fn [[id ms]] [id {:messages ms :at at}])) gone))))))
+                      (reset! watched ref))))
+         close (fn [] (when-let [ref @watched] (remove-watch ref watch-key) (reset! watched nil)))]
+     (with-meta
+       (fn []
+         (if-let [get-all-slaves (resolve live-source)]
+           (let [messages (resolve activity-source)
+                 _ (watch!)
+                 now (clock)
+                 _ (swap! departed (fn [m] (into {} (remove (fn [[_ {:keys [at]}]] (> (- now at) (* 2 linger-ms)))) m)))
+                 shouts-of (fn [id]
+                             (or (seq (when messages (try (messages id) (catch Throwable _ nil))))
+                                 (get-in @departed [id :messages])))
+                 current (agents (get-all-slaves) shouts-of now)
+                 result (if (pos? linger-ms)
+                          (:roster (swap! state settle current shouts-of now linger-ms))
+                          current)]
+             (on-warning nil)
+             result)
+           (do (on-warning (str "roster source " live-source " unavailable; showing no agents"))
+               [])))
+       {:olympus/close close}))))
 
 (m/=> slave->agent [:function
                     [:=> [:cat [:map [:slave/id :any]]] s/Agent]

@@ -153,3 +153,29 @@
     (swap! clock + 1000)
     (is (= [:error] (mapv :agent/status (lingering))))
     (is (= [] (plain)))))
+
+(deftest a-final-shout-survives-the-host-clearing-it-on-exit
+  (let [registry {:atom (atom {"obs-venice" {:messages axon-failure}}) :name "" :opts {}}
+        slaves (atom [venice-slave])
+        clock (atom 100000)
+        resolve (fn [sym] (condp = sym
+                            roster/live-source (fn [] @slaves)
+                            roster/activity-source (fn [id] (:messages (get @(:atom registry) id)))
+                            roster/registry-source registry
+                            nil))
+        f (roster/live-roster-fn (fn [_]) resolve #(deref clock) 60000)]
+    (is (= [:working] (mapv :agent/status (f))))
+    (testing "the host exits the agent: shouts and slave row vanish in the same tick"
+      (swap! (:atom registry) dissoc "obs-venice")
+      (reset! slaves [])
+      (swap! clock + 1000)
+      (is (= [{:agent/status :error :agent/exited? true :agent/activity "Loop failed: axon API error: 402"}]
+             (mapv #(select-keys % [:agent/status :agent/exited? :agent/activity]) (f)))))
+    (testing "closing the adapter removes its watch"
+      (is (= 1 (count (.getWatches ^clojure.lang.IRef (:atom registry)))))
+      ((:olympus/close (meta f)))
+      (is (empty? (.getWatches ^clojure.lang.IRef (:atom registry)))))
+    (is (= {"a" [{:message "m"}]}
+           (roster/departures {"a" {:messages [{:message "m"}]} "b" {:messages []} "c" {:data {:messages [1]}}}
+                              {"c" {}}))
+        "only agents that left with messages are departures")))

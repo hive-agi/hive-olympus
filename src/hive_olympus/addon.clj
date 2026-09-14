@@ -108,6 +108,8 @@
       (.shutdownNow executor)
       (.awaitTermination executor 2 TimeUnit/SECONDS))
     (locking state
+      (when-let [close (some-> (:roster-fn @state) meta :olympus/close)]
+        (try (close) (catch Throwable _ nil)))
       (reset! state {:lifecycle :stopped})
       nil)))
 
