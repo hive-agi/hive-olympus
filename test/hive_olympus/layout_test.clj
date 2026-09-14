@@ -95,7 +95,10 @@
 
 (hst/deftrifecta-from-schema calculate-layout
   hive-olympus.layout/calculate-layout
-  {:in [:maybe [:int {:min -3 :max 40}]]
+  ;; Uniform ints over [-3, 40] leave the four grid sizes at ~10% of draws, so
+  ;; a seed could starve :grid. The elements weight every branch boundary.
+  {:in [:maybe [:int {:min -3 :max 40
+                      :gen/elements [-3 -1 0 1 2 3 4 5 8 9 12 13 40]}]]
    :out s/Layout
    :rel (fn [n out]
           (let [n (max 0 (or n 0))
