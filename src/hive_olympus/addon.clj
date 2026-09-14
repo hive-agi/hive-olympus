@@ -25,7 +25,10 @@
             [hive-olympus.presenter :as presenter]
             [hive-olympus.roster :as roster]
             [hive-olympus.view :as view]
-            [hive-olympus.operator :as operator])
+            [hive-olympus.operator :as operator]
+            [hive-spi.vessel :as render-port]
+            [hive-spi.notify :as notify]
+            [hive-vessel.renderer :as renderer])
   (:import (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit)))
 
 (def addon-id-value "hive.olympus")
@@ -39,6 +42,22 @@
       (symbol? f) (let [v (requiring-resolve f)] (fn [] (v)))
       (string? f) (let [v (requiring-resolve (symbol f))] (fn [] (v)))
       :else (roster/live-roster-fn on-warning nil nil (:olympus/linger-ms config)))))
+
+(defn- refresh-renderers! [state]
+  (let [{:keys [renderer-source registered-renderers seat panels]} @state
+        current (if renderer-source @renderer-source {})]
+    (doseq [id (keys registered-renderers) :when (not (contains? current id))]
+      (presenter/unregister! seat id))
+    (doseq [[id target] current
+            :when (not (identical? target (get registered-renderers id)))]
+      (presenter/register! seat id
+        (fn [ops]
+          (let [result (render-port/render! target ops)]
+            (when (:error result)
+              (throw (ex-info "Vessel rendering failed" (:error result))))
+            result))
+        panels))
+    (swap! state assoc :registered-renderers current)))
 
 (defn- refresh-locked!
   "Refresh independent observations, render and broadcast. Caller holds the state lock."
@@ -62,6 +81,7 @@
                            (cond-> (or operator-snapshot {:requests [] :events []})
                              operator-error (update :unavailable (fnil conj []) :snapshot)))))]
       (swap! state assoc :model grid :panels current)
+      (refresh-renderers! state)
       (presenter/broadcast! seat current))
     (presenter/status seat)))
 
@@ -113,6 +133,8 @@
         (let [config (merge seed runtime-config)
               refresh-ms (long (or (:olympus/refresh-ms config) default-refresh-ms))
               warn! (fn [msg] (swap! state assoc :roster-warning msg))
+              renderer-source (or (:vessel/renderers config) renderer/renderers)
+              renderer-watch (Object.)
               seat (presenter/create)]
           (reset! state {:lifecycle :active
                          :refresh-ms refresh-ms
@@ -120,6 +142,9 @@
                          :olympus (atom model/initial-state)
                          :seat seat
                          :refresh-pending (atom false)
+                         :renderer-source renderer-source
+                         :renderer-watch renderer-watch
+                         :registered-renderers {}
                          :roster []
                          :panels (view/panels (model/grid-model [] model/initial-state))})
           (swap! state assoc :executor (start-loop state refresh-ms))
@@ -128,10 +153,15 @@
                          (not (contains? config :olympus/roster-fn))))
             (swap! state assoc :operator-room
                    (operator/open config (fn [] (request-refresh! state)))))
+          (add-watch renderer-source renderer-watch
+                     (fn [_ _ before after]
+                       (when (not= before after) (request-refresh! state))))
           (refresh-locked! state)
           {:success? true :metadata {:refresh-ms refresh-ms
                                      :agents (count (:roster @state))}})
         (catch Throwable t
+          (when-let [source (:renderer-source @state)]
+            (remove-watch source (:renderer-watch @state)))
           (when-let [close (get-in @state [:operator-room :close])] (close))
           (when-let [executor (:executor @state)]
             (.shutdownNow ^ScheduledExecutorService executor))
@@ -140,6 +170,8 @@
 
 (defn- stop! [state]
   (let [^ScheduledExecutorService executor (:executor @state)]
+    (when-let [source (:renderer-source @state)]
+      (remove-watch source (:renderer-watch @state)))
     (when executor
       (.shutdownNow executor)
       (.awaitTermination executor 2 TimeUnit/SECONDS))
@@ -164,6 +196,23 @@
   (count (get-in @state [:model :grid/tabs] [nil])))
 
 (defrecord OlympusAddon [state seed]
+  notify/INotify
+  (notify-id [_] :olympus)
+  (backend-available? [_] (and (= :active (:lifecycle @state))
+                              (some? (:operator-room @state))))
+  (accepts? [_ event-type] (qualified-keyword? event-type))
+  (notify! [_ notification]
+    (try
+      (let [observe (get-in @state [:operator-room :observe!])
+            delivered? (boolean
+                        (when observe
+                          (observe (assoc notification
+                                          :message (or (:summary notification) (:body notification))))))]
+        {:delivered? delivered? :backend :olympus
+         :detail (if delivered? {} {:reason :unavailable})})
+      (catch Throwable t
+        {:delivered? false :backend :olympus
+         :detail {:reason :observation-failed :message (ex-message t)}})))
   addon/IAddon
   (addon-id [_] addon-id-value)
   (addon-type [_] :native)

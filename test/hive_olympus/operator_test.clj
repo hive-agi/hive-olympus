@@ -8,7 +8,9 @@
             [hive-olympus.test-support :as t]
             [hive-vessel.core :as vessel]
             [hive-vessel.schema :as schema]
-            [malli.core :as m]))
+            [malli.core :as m]
+            [hive-vessel.renderer :as renderer]
+            [hive-spi.notify :as notify]))
 
 (deftest projection-is-bounded-and-never-carries-authority
   (let [asks (atom {"ask-1" {:agent-id "child" :question "Need network"
@@ -96,3 +98,26 @@
       (is (= :degraded (:status (addon/health core))))
       (is (= 1 (get-in (addon/health core) [:details :operator-room :pending])))
       (finally (addon/shutdown! core)))))
+
+(deftest new-vessel-needs-no-application-specific-harness
+  (let [received (promise)
+        r (renderer/renderer ::new-editor
+            (fn [] {:vessel/id ::new-editor :vessel/dialect :json
+                    :vessel/execute! (fn [native]
+                                       (when (str/includes? (pr-str native) "contract-event")
+                                         (deliver received native)))}))
+        core (olympus/addon-ctor {:olympus/refresh-ms 0
+                                  :olympus/roster-fn (constantly [])
+                                  :olympus/operator-sources {}})]
+    (try
+      (is (:success? (addon/initialize! core {})))
+      (renderer/register! r)
+      (is (satisfies? notify/INotify core))
+      (is (:delivered? (notify/notify! core
+                         {:event-type :run/failed :summary "contract-event"
+                          :body "Run failed" :level :error :urgency :normal})))
+      (is (not= :timeout (deref received 3000 :timeout)))
+      (is (= :live (get-in (addon/health core) [:details :presenters ::new-editor :status])))
+      (finally (renderer/unregister! r) (addon/shutdown! core)))
+    (is (false? (:delivered? (notify/notify! core
+                              {:event-type :run/failed :summary "after shutdown"}))))))
