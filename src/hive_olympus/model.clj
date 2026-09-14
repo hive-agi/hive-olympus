@@ -22,6 +22,22 @@
           (map (fn [st] [st (get freq st 0)]))
           statuses)))
 
+(defn route
+  "The provider/model label an AGENT runs on, or nil when neither is known."
+  [{:agent/keys [provider model]}]
+  (cond
+    (and provider model) (str provider "/" model)
+    :else (or model provider)))
+
+(defn routes
+  "[label count] for every route among AGENTS, most used first, then by label."
+  [agents]
+  (->> agents
+       (keep route)
+       frequencies
+       (sort-by (fn [[label n]] [(- n) label]))
+       (mapv vec)))
+
 (defn clamp-tab
   "TAB bounded to [0, TAB-COUNT - 1]."
   [tab tab-count]
@@ -54,7 +70,8 @@
                       (range n-tabs))
      :grid/active-tab active
      :grid/focus focus
-     :grid/counts (counts agents)}))
+     :grid/counts (counts agents)
+     :grid/routes (routes agents)}))
 
 (defn tab-of
   "Tab index holding AGENT-ID in ROSTER's layout, or nil."
@@ -86,6 +103,7 @@
     (assoc state :focus nil)))
 
 (m/=> counts [:=> [:cat [:sequential s/Agent]] s/Counts])
+(m/=> routes [:=> [:cat [:sequential s/Agent]] [:vector [:tuple :string pos-int?]]])
 (m/=> grid-model [:=> [:cat [:sequential s/Agent] s/OlympusState] s/GridModel])
 (m/=> tab-of [:=> [:cat [:sequential s/Agent] :string] [:maybe nat-int?]])
 (m/=> next-tab [:=> [:cat s/OlympusState :int] s/OlympusState])

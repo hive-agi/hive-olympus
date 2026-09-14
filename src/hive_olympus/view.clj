@@ -6,6 +6,7 @@
 
    The contract is the op shape; there is no compile dependency on hive-vessel."
   (:require [clojure.string :as str]
+            [hive-olympus.model :as model]
             [hive-olympus.schema :as s]
             [malli.core :as m]))
 
@@ -34,44 +35,76 @@
   [counts index n-tabs]
   (str "Olympus  tab " (inc index) "/" n-tabs "  (" (summary counts) ")"))
 
+(defn- present [s]
+  (when-not (str/blank? s) s))
+
+(defn agent-fields
+  "The [label value] rows AGENT can fill, in reading order; absent facts are
+   omitted rather than shown empty."
+  [{:agent/keys [id mode project parent drones done task activity seen] :as agent}]
+  (->> [["id" id]
+        ["model" (model/route agent)]
+        ["mode" mode]
+        ["project" project]
+        ["ling" parent]
+        ["drones" (some-> drones str)]
+        ["done" (when (and done (pos? done)) (str done))]
+        ["task" task]
+        ["activity" activity]
+        ["seen" seen]]
+       (keep (fn [[label v]] (when-let [v (present v)] [label v])))
+       vec))
+
 (defn cell-blocks
   "Blocks for one grid cell: heading, toned status para, fields."
   [{:cell/keys [row col agent focused?]}]
-  (let [{:agent/keys [id name status task]} agent]
+  (let [{:agent/keys [id name status kind]} agent]
     [{:block/type :heading
       :level 2
-      :text (str (when focused? "> ") (if (str/blank? name) id name))}
+      :text (str (when focused? "> ")
+                 (if (str/blank? name) id name)
+                 (when (= :drone kind) "  (drone)"))}
      {:block/type :para
       :text (str (clojure.core/name status) (when focused? "  (focused)"))
       :tone (status-tone status)}
      {:block/type :fields
-      :fields (cond-> [["id" id] ["cell" (str "row " (inc row) ", col " (inc col))]]
-                (not (str/blank? task)) (conj ["task" task]))}]))
+      :fields (conj (agent-fields agent)
+                    ["cell" (str "row " (inc row) ", col " (inc col))])}]))
+
+(defn routes-text
+  "\"routes: venice/deepseek-v4-flash x2, axon/glm-5.3\" for ROUTES, or nil."
+  [routes]
+  (when (seq routes)
+    (str "routes: "
+         (str/join ", " (map (fn [[label n]] (if (> n 1) (str label " x" n) label)) routes)))))
 
 (defn tab-blocks
-  "Blocks for TAB of N-TABS."
-  [{:tab/keys [active? cells]} n-tabs]
-  (let [cells (sort-by (juxt :cell/row :cell/col) cells)]
-    (vec
-     (concat
-      (when (> n-tabs 1)
-        [{:block/type :para
-          :text (if active? "active tab" "inactive tab")
-          :tone (if active? :info :muted)}])
-      (if (seq cells)
-        (mapcat cell-blocks cells)
-        [{:block/type :para :text "No active agents" :tone :muted}])))))
+  "Blocks for TAB of N-TABS under the swarm-wide ROUTES."
+  ([tab n-tabs] (tab-blocks tab n-tabs nil))
+  ([{:tab/keys [active? cells]} n-tabs routes]
+   (let [cells (sort-by (juxt :cell/row :cell/col) cells)]
+     (vec
+      (concat
+       (when (> n-tabs 1)
+         [{:block/type :para
+           :text (if active? "active tab" "inactive tab")
+           :tone (if active? :info :muted)}])
+       (when-let [t (routes-text routes)]
+         [{:block/type :para :text t :tone :muted}])
+       (if (seq cells)
+         (mapcat cell-blocks cells)
+         [{:block/type :para :text "No active agents" :tone :muted}]))))))
 
 (defn panels
   "One :ui/show-panel op per tab of MODEL, in tab order."
-  [{:grid/keys [tabs counts]}]
+  [{:grid/keys [tabs counts routes]}]
   (let [n-tabs (count tabs)]
     (vec (map-indexed
           (fn [i tab]
             {:op :ui/show-panel
              :panel/id (panel-id i)
              :doc {:doc/title (title counts i n-tabs)
-                   :doc/blocks (tab-blocks tab n-tabs)}})
+                   :doc/blocks (tab-blocks tab n-tabs routes)}})
           tabs))))
 
 (defn delta

@@ -12,12 +12,28 @@
 (def AgentId
   [:string {:min 1}])
 
+(def Kind
+  [:enum :ling :drone])
+
 (def Agent
+  "An observed swarm member. Only id, name and status are required; every
+   other key is what the roster source could tell, and the view shows only
+   what is present."
   [:map
    [:agent/id AgentId]
    [:agent/name :string]
    [:agent/status Status]
-   [:agent/task {:optional true} [:maybe :string]]])
+   [:agent/task {:optional true} [:maybe :string]]
+   [:agent/kind {:optional true} Kind]
+   [:agent/parent {:optional true} AgentId]
+   [:agent/model {:optional true} :string]
+   [:agent/provider {:optional true} :string]
+   [:agent/mode {:optional true} :string]
+   [:agent/project {:optional true} :string]
+   [:agent/activity {:optional true} :string]
+   [:agent/seen {:optional true} :string]
+   [:agent/done {:optional true} nat-int?]
+   [:agent/drones {:optional true} nat-int?]])
 
 (def Roster
   [:vector {:gen/max 12} Agent])
@@ -81,7 +97,8 @@
    [:grid/tabs [:vector {:min 1 :gen/max 3} Tab]]
    [:grid/active-tab nat-int?]
    [:grid/focus [:maybe AgentId]]
-   [:grid/counts Counts]])
+   [:grid/counts Counts]
+   [:grid/routes {:optional true} [:vector [:tuple :string pos-int?]]]])
 
 (def Tone
   [:enum :plain :muted :info :success :warn :error])

@@ -33,11 +33,38 @@
     (testing "a cell is heading, toned status, fields"
       (is (= [{:block/type :heading :level 2 :text "alpha"}
               {:block/type :para :text "working" :tone :info}
-              {:block/type :fields :fields [["id" "a1"] ["cell" "row 1, col 1"] ["task" "port layout"]]}]
+              {:block/type :fields :fields [["id" "a1"] ["task" "port layout"] ["cell" "row 1, col 1"]]}]
              (subvec (get-in p1 [:doc :doc/blocks]) 1 4))))
     (testing "the focused cell is marked and a blank name falls back to the id"
       (is (= "> epsilon" (:text (second (get-in p2 [:doc :doc/blocks])))))
       (is (some #(= "a4" (:text %)) (get-in p1 [:doc :doc/blocks]))))))
+
+(deftest an-observed-agent-shows-what-the-roster-knows
+  (let [agents [{:agent/id "l1" :agent/name "scout" :agent/status :working :agent/kind :ling
+                 :agent/provider "venice" :agent/model "deepseek-v4-flash" :agent/mode "hive-agent"
+                 :agent/project "hive-olympus" :agent/drones 1 :agent/done 2
+                 :agent/task "read layout" :agent/activity "turn 3: tool_calls=[read_file]"
+                 :agent/seen "<1m ago"}
+                {:agent/id "d1" :agent/name "d1" :agent/status :error :agent/kind :drone
+                 :agent/parent "l1" :agent/model "glm-5.3" :agent/provider "axon" :agent/done 0}
+                {:agent/id "l2" :agent/name "helper" :agent/status :idle :agent/kind :ling
+                 :agent/provider "venice" :agent/model "deepseek-v4-flash"}]
+        [panel] (render agents model/initial-state)
+        blocks (get-in panel [:doc :doc/blocks])]
+    (testing "the tab opens with the swarm's routes, most used first"
+      (is (= {:block/type :para :text "routes: venice/deepseek-v4-flash x2, axon/glm-5.3" :tone :muted}
+             (first blocks))))
+    (testing "every known fact of a ling is a field, in reading order"
+      (is (= [["id" "l1"] ["model" "venice/deepseek-v4-flash"] ["mode" "hive-agent"]
+              ["project" "hive-olympus"] ["drones" "1"] ["done" "2"] ["task" "read layout"]
+              ["activity" "turn 3: tool_calls=[read_file]"] ["seen" "<1m ago"] ["cell" "row 1, col 1"]]
+             (:fields (nth blocks 3)))))
+    (testing "a drone is labelled, names its ling, and a zero done count is omitted"
+      (is (= {:block/type :heading :level 2 :text "d1  (drone)"} (nth blocks 4)))
+      (is (= [["id" "d1"] ["model" "axon/glm-5.3"] ["ling" "l1"] ["cell" "row 1, col 2"]]
+             (:fields (nth blocks 6)))))
+    (testing "renders stay hive-vessel ops"
+      (is (m/validate vs/ShowPanel panel)))))
 
 (deftest the-empty-roster-still-shows-a-panel
   (is (= [{:op :ui/show-panel
