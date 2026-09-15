@@ -2,9 +2,9 @@
 
  ;; Sibling checkouts during development go in the untracked local.deps.edn:
  ;;   clojure -Sdeps "$(cat local.deps.edn)" -M:test
- :deps {org.clojure/clojure {:mvn/version "1.12.5"}
+ :deps {org.clojure/clojure {:mvn/version "1.12.6"}
         metosin/malli {:mvn/version "0.20.1"}
-        io.github.hive-agi/hive-addon {:mvn/version "1.0.6"}
+        io.github.hive-agi/hive-addon {:mvn/version "1.0.10"}
         io.github.hive-agi/hive-spi {:mvn/version "1.1.1"}
         io.github.hive-agi/hive-vessel {:mvn/version "0.1.4"}}
 
@@ -12,13 +12,13 @@
  {:dev {:extra-paths ["dev" "test"]
         :extra-deps {org.clojure/test.check {:mvn/version "1.1.3"}
                      io.github.hive-agi/hive-test {:mvn/version "0.4.5"}
-                     io.github.hive-agi/hive-schemas {:mvn/version "0.1.33"}
+                     io.github.hive-agi/hive-schemas {:mvn/version "0.1.34"}
                      io.github.hive-agi/hive-vessel {:mvn/version "0.1.4"}}}
 
   :test {:extra-paths ["test"]
          :extra-deps {org.clojure/test.check {:mvn/version "1.1.3"}
                       io.github.hive-agi/hive-test {:mvn/version "0.4.5"}
-                      io.github.hive-agi/hive-schemas {:mvn/version "0.1.33"}
+                      io.github.hive-agi/hive-schemas {:mvn/version "0.1.34"}
                       io.github.hive-agi/hive-vessel {:mvn/version "0.1.4"}}
          :jvm-opts ["-Xmx1g"]
          :main-opts ["-m" "hive-olympus.test-runner"]}
