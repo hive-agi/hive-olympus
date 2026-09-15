@@ -82,6 +82,36 @@
                  :doc/blocks [{:block/type :para :text "No active agents" :tone :muted}]}}]
          (render [] model/initial-state))))
 
+(deftest the-focus-panel-zooms-into-one-agent
+  (let [grid (model/grid-model roster {:active-tab 0 :focus "a1"})
+        lens-doc {:doc/title "Carto Flow" :doc/blocks [{:block/type :list :items ["#1 OK write-form"]}]}
+        sections [{:lens/id "carto-flow" :lens/status :ok :doc lens-doc}
+                  {:lens/id :quiet :lens/status :empty}
+                  {:lens/id :broken :lens/status :error :error "boom"}]]
+    (testing "nothing focused, no panel"
+      (is (nil? (view/focus-panel (model/grid-model roster model/initial-state) sections))))
+    (testing "the focused agent's cell leads, then each lens under its own heading"
+      (let [panel (view/focus-panel grid sections)
+            blocks (get-in panel [:doc :doc/blocks])]
+        (is (= "olympus/focus" (:panel/id panel)))
+        (is (= "Olympus  focus  alpha" (get-in panel [:doc :doc/title])))
+        (is (= {:block/type :heading :level 2 :text "> alpha"} (first blocks)))
+        (is (= [{:block/type :heading :level 2 :text "Carto Flow"}
+                {:block/type :list :items ["#1 OK write-form"]}
+                {:block/type :heading :level 2 :text "lens broken"}
+                {:block/type :para :tone :error :text "lens failed: boom"}]
+               (subvec blocks 3)))
+        (is (m/validate vs/ShowPanel panel))))
+    (testing "an empty lens is silent, and so is an empty seat"
+      (is (some #(= "No lens has anything on this agent" (:text %))
+                (get-in (view/focus-panel grid [(second sections)]) [:doc :doc/blocks])))
+      (is (some #(= "No lenses registered" (:text %))
+                (get-in (view/focus-panel grid []) [:doc :doc/blocks]))))
+    (testing "the zoom closes in the delta when focus clears"
+      (let [with-focus (conj (view/panels grid) (view/focus-panel grid sections))]
+        (is (= [{:op :ui/close-panel :panel/id "olympus/focus"}]
+               (view/delta with-focus (view/panels grid))))))))
+
 (deftest status-tones
   (is (= {:idle :muted :working :info :blocked :warn :error :error :spawning :muted}
          view/status-tone))

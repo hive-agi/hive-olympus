@@ -76,6 +76,35 @@
         (is (= {:status :degraded :deliveries 0 :error "boom"} (get-in details [:presenters "bad"]))))
       (finally (addon/shutdown! a)))))
 
+(deftest a-failing-lens-degrades-health-and-isolates-the-others
+  (let [roster (atom (t/agents 2))
+        [a _] (started roster {})
+        h (addon/hooks a)
+        [calls target] (t/recorder)]
+    (try
+      ((:olympus/register-presenter! h) "p" target)
+      (is (= "good" ((:olympus/register-lens! h) "good"
+                     (fn [agent] {:doc/title "Good" :doc/blocks [{:block/type :para :text (:agent/id agent)}]}))))
+      (is (= "bad" ((:olympus/register-lens! h) "bad" (fn [_] (throw (ex-info "boom" {}))))))
+      (is (nil? ((:olympus/register-lens! h) "nope" :not-a-fn)))
+      (is (= {"bad" :idle "good" :idle} ((:olympus/lenses h))) "idle until an agent is focused")
+      (is (= :ok (:status (addon/health a))))
+      ((:olympus/focus! h) "ling-2")
+      (let [{:keys [status details]} (addon/health a)
+            blocks (mapcat #(get-in % [:doc :doc/blocks])
+                           (filter #(= "olympus/focus" (:panel/id %)) (last @calls)))]
+        (is (= :degraded status))
+        (is (= {"bad" :error "good" :ok} (:lenses details)))
+        (is (= "ling-2" (:focus details)))
+        (is (some #(= "ling-2" (:text %)) blocks) "the good lens still shows")
+        (is (some #(= "lens failed: boom" (:text %)) blocks)))
+      (testing "unregistering the failing lens restores health and re-renders"
+        (is (= "bad" ((:olympus/unregister-lens! h) "bad")))
+        (is (= :ok (:status (addon/health a))))
+        (is (not-any? #(= "lens failed: boom" (:text %))
+                      (mapcat #(get-in % [:doc :doc/blocks]) (last @calls)))))
+      (finally (addon/shutdown! a)))))
+
 (deftest a-throwing-roster-keeps-the-last-panels
   (let [roster (atom (t/agents 2))
         [a _] (started roster {})

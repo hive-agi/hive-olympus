@@ -109,6 +109,40 @@
                    :doc/blocks (tab-blocks tab n-tabs routes)}})
           tabs))))
 
+(def focus-panel-id
+  "Panel id of the zoom into the focused agent."
+  "olympus/focus")
+
+(defn- section-blocks
+  "Blocks of one lens observation: its document under a level-2 heading, an
+   error in error tone, nothing for a lens with nothing to say."
+  [{:lens/keys [id status] :keys [doc error]}]
+  (case status
+    :ok (into [{:block/type :heading :level 2 :text (:doc/title doc)}] (:doc/blocks doc))
+    :error [{:block/type :heading :level 2 :text (str "lens " (if (keyword? id) (name id) (str id)))}
+            {:block/type :para :tone :error :text (str "lens failed: " error)}]
+    []))
+
+(defn focus-panel
+  "The :ui/show-panel zooming into MODEL's focused agent: its cell, then one
+   section per lens in SECTIONS. nil when nothing is focused."
+  [model sections]
+  (when-let [cell (model/focused-cell model)]
+    (let [{:agent/keys [id name]} (:cell/agent cell)
+          shown (remove #(= :empty (:lens/status %)) sections)]
+      {:op :ui/show-panel
+       :panel/id focus-panel-id
+       :doc {:doc/title (str "Olympus  focus  " (if (str/blank? name) id name))
+             :doc/blocks (into (cell-blocks cell)
+                               (if (seq shown)
+                                 (mapcat section-blocks shown)
+                                 [{:block/type :para :tone :muted
+                                   :text (if (seq sections)
+                                           "No lens has anything on this agent"
+                                           "No lenses registered")}]))}})))
+
+(m/=> focus-panel [:=> [:cat s/GridModel s/LensSections] [:maybe s/ShowPanel]])
+
 (defn delta
   "Ops that move a vessel showing PREVIOUS (a panels vector, nil when nothing
    was delivered) to CURRENT: a :ui/close-panel per panel id that vanished,

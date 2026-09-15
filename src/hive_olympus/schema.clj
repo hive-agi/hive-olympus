@@ -106,11 +106,22 @@
   [:enum :plain :muted :info :success :warn :error])
 
 (def Block
+  "The hive-vessel block vocabulary, restated: every block a lens or the
+   operator room emits must be one a vessel can paint."
   [:multi {:dispatch :block/type}
    [:heading [:map [:block/type [:= :heading]] [:text :string]
               [:level {:optional true} [:int {:min 1 :max 3}]]]]
    [:para [:map [:block/type [:= :para]] [:text :string] [:tone {:optional true} Tone]]]
-   [:fields [:map [:block/type [:= :fields]] [:fields [:vector [:tuple :string :string]]]]]])
+   [:fields [:map [:block/type [:= :fields]] [:fields [:vector [:tuple :string :string]]]]]
+   [:list [:map [:block/type [:= :list]] [:items [:vector :string]]]]
+   [:code [:map [:block/type [:= :code]] [:text :string] [:lang {:optional true} :string]]]
+   [:diff [:map [:block/type [:= :diff]]
+           [:text {:optional true} :string]
+           [:lines {:optional true} [:vector [:map
+                                              [:line/kind [:enum :context :added :removed :hunk]]
+                                              [:line/text :string]]]]]]
+   [:link [:map [:block/type [:= :link]] [:text :string] [:file [:string {:min 1}]]
+           [:line {:optional true} [:int {:min 1}]]]]])
 
 (def Doc
   [:map
@@ -118,9 +129,10 @@
    [:doc/blocks [:vector Block]]])
 
 (def PanelId
+  "A grid tab, the focus zoom, or the operator room."
   [:re {:gen/schema [:int {:min 1 :max 99}]
         :gen/fmap #(str "olympus/tab-" %)}
-   #"^olympus/tab-[1-9][0-9]*$"])
+   #"^olympus/(tab-[1-9][0-9]*|focus|operator)$"])
 
 (def ShowPanel
   [:map
@@ -143,3 +155,21 @@
 
 (def Panels
   [:vector {:min 1} ShowPanel])
+
+(def LensId
+  [:or :keyword [:string {:min 1}]])
+
+(def LensStatus
+  "What a lens answered for the focused agent: a document, nothing, or a
+   failure."
+  [:enum :ok :empty :error])
+
+(def LensSection
+  [:map
+   [:lens/id LensId]
+   [:lens/status LensStatus]
+   [:doc {:optional true} Doc]
+   [:error {:optional true} :string]])
+
+(def LensSections
+  [:vector {:gen/max 4} LensSection])

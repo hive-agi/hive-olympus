@@ -82,6 +82,13 @@
             (when (= agent-id (:agent/id agent)) (or (:tab pos) 0)))
           (map vector agents (layout/cell-positions lay (count agents))))))
 
+(defn focused-cell
+  "The GridCell of GRID's focused agent, or nil when nothing is focused."
+  [{:grid/keys [focus tabs]}]
+  (when focus
+    (some (fn [cell] (when (= focus (get-in cell [:cell/agent :agent/id])) cell))
+          (mapcat :tab/cells tabs))))
+
 (defn next-tab
   "STATE advanced one tab, wrapping after the last of TAB-COUNT."
   [state tab-count]

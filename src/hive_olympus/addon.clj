@@ -28,7 +28,8 @@
             [hive-olympus.operator :as operator]
             [hive-spi.vessel :as render-port]
             [hive-spi.notify :as notify]
-            [hive-vessel.renderer :as renderer])
+            [hive-vessel.renderer :as renderer]
+            [hive-olympus.lens :as lens])
   (:import (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit)))
 
 (def addon-id-value "hive.olympus")
@@ -62,7 +63,7 @@
 (defn- refresh-locked!
   "Refresh independent observations, render and broadcast. Caller holds the state lock."
   [state]
-  (let [{:keys [roster-fn seat olympus operator-room]} @state]
+  (let [{:keys [roster-fn seat olympus operator-room lenses]} @state]
     (try
       (let [agents (vec (roster-fn))]
         (swap! state assoc :roster agents :roster-error nil))
@@ -75,12 +76,16 @@
           (swap! state assoc :operator-error (or (ex-message t) (str t))))))
     (let [{:keys [roster operator-snapshot operator-error]} @state
           grid (model/grid-model roster @olympus)
+          sections (when-let [cell (model/focused-cell grid)]
+                     (lens/observe (if lenses @lenses {}) (:cell/agent cell)))
           current (cond-> (view/panels grid)
+                    sections
+                    (conj (view/focus-panel grid sections))
                     operator-room
                     (conj (operator/panel
                            (cond-> (or operator-snapshot {:requests [] :events []})
                              operator-error (update :unavailable (fnil conj []) :snapshot)))))]
-      (swap! state assoc :model grid :panels current)
+      (swap! state assoc :model grid :panels current :lens-sections sections)
       (refresh-renderers! state)
       (presenter/broadcast! seat current))
     (presenter/status seat)))
@@ -141,6 +146,7 @@
                          :roster-fn (roster-fn-of config warn!)
                          :olympus (atom model/initial-state)
                          :seat seat
+                         :lenses (lens/create)
                          :refresh-pending (atom false)
                          :renderer-source renderer-source
                          :renderer-watch renderer-watch
@@ -192,6 +198,30 @@
     (when-let [seat (:seat @state)]
       (presenter/unregister! seat id))))
 
+(defn- register-lens!
+  "Register LENS under ID and re-render, so a focused agent shows it at once."
+  [state id lens]
+  (locking state
+    (when (= :active (:lifecycle @state))
+      (when-let [registered (lens/register! (:lenses @state) id lens)]
+        (refresh-locked! state)
+        registered))))
+
+(defn- unregister-lens!
+  [state id]
+  (locking state
+    (when-let [lenses (:lenses @state)]
+      (when-let [removed (lens/unregister! lenses id)]
+        (when (= :active (:lifecycle @state)) (refresh-locked! state))
+        removed))))
+
+(defn- lens-status
+  "id -> status of every registered lens: its last observation, or :idle
+   while no agent is focused."
+  [{:keys [lenses lens-sections]}]
+  (let [observed (lens/status (or lens-sections []))]
+    (into {} (map (fn [id] [id (get observed id :idle)])) (if lenses (lens/ids lenses) []))))
+
 (defn- tab-count [state]
   (count (get-in @state [:model :grid/tabs] [nil])))
 
@@ -216,16 +246,18 @@
   addon/IAddon
   (addon-id [_] addon-id-value)
   (addon-type [_] :native)
-  (capabilities [_] #{:olympus :presenter-seat :health-reporting})
+  (capabilities [_] #{:olympus :presenter-seat :lens-seat :health-reporting})
   (initialize! [_ runtime-config] (start! state seed runtime-config))
   (shutdown! [_] (stop! state))
   (tools [_] [])
   (schema-extensions [_] [])
   (health [_]
-    (let [{:keys [lifecycle seat model refresh-ms roster-error roster-warning operator-error operator-snapshot last-error]} @state
+    (let [{:keys [lifecycle seat model refresh-ms roster-error roster-warning operator-error operator-snapshot last-error] :as s} @state
           presenters (if seat (presenter/status seat) {})
+          lenses (lens-status s)
           degraded? (or roster-error roster-warning operator-error (seq (:unavailable operator-snapshot))
-                        (some #(= :degraded (:status %)) (vals presenters)))]
+                        (some #(= :degraded (:status %)) (vals presenters))
+                        (some #(= :error %) (vals lenses)))]
       {:status (case lifecycle
                  :active (if degraded? :degraded :ok)
                  :failed :down
@@ -236,7 +268,9 @@
                          :agents (get-in model [:grid/counts :total] 0)
                          :tabs (count (:grid/tabs model))
                          :layout (:grid/layout model)
+                         :focus (:grid/focus model)
                          :presenters presenters
+                         :lenses lenses
                          :operator-room (when operator-snapshot
                                           {:pending (count (:requests operator-snapshot))
                                            :events (count (:events operator-snapshot))
@@ -250,6 +284,9 @@
     (if (= :active (:lifecycle @state))
       {:olympus/register-presenter! (fn [id target] (register-presenter! state id target))
        :olympus/unregister-presenter! (fn [id] (unregister-presenter! state id))
+       :olympus/register-lens! (fn [id lens] (register-lens! state id lens))
+       :olympus/unregister-lens! (fn [id] (unregister-lens! state id))
+       :olympus/lenses (fn [] (lens-status @state))
        :olympus/operator-snapshot (fn [] (:operator-snapshot @state))
        :olympus/observe! (fn [event]
                            (when-let [observe (get-in @state [:operator-room :observe!])]

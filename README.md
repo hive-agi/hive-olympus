@@ -37,6 +37,39 @@ no compile-time dependency on the host; inject `:olympus/roster-fn` to replace i
 `:olympus/next-tab!`, `:olympus/prev-tab!`. A target is `(fn [ops])`; a throw
 marks that presenter degraded and it is retried on the next refresh.
 
+`:olympus/register-lens!` `(fn [id lens])`, `:olympus/unregister-lens!` `(fn [id])`,
+`:olympus/lenses` (id -> `:idle`, `:ok`, `:empty` or `:error`). A lens is
+`(fn [Agent] -> Doc | nil)`.
+
+## Zooming in: the focus panel and lenses
+
+Focusing an agent (`:olympus/focus!`) opens one more panel, `olympus/focus`: the
+agent's cell, then one section per registered lens, each lens's document under its
+own heading. A lens answering nil is silent; a lens that throws or answers an
+invalid document is shown as failed and marks core degraded, without touching the
+other lenses. Clearing focus closes the panel. No new vessel primitive: the zoom is
+a `:ui/show-panel` like every tab, so every harness already shows it.
+
+A lens brick is a manifest too. It names a source addon and a lens fn over that
+source's hooks, and `hive-olympus.lens-brick` registers the lens on core:
+
+```clojure
+{:addon/id "hive.carto-flow.olympus"
+ :addon/type :native
+ :addon/init-ns "hive-olympus.lens-brick"
+ :addon/init-fn "addon-ctor"
+ :addon/config {:olympus/lens-source "hive.carto-flow"
+                :olympus/lens-fn "hive-carto-flow.lens/olympus-lens"
+                :olympus/lens-id "carto-flow"}
+ :addon/dependencies #{"hive.olympus" "hive.carto-flow"}
+ :addon/capabilities #{:olympus-lens :health-reporting}}
+```
+
+The lens fn is `(fn [source-hooks agent] -> Doc | nil)`; it is resolved at mount (a
+fn that does not resolve fails the mount) and reads the source's current hooks at
+every observation. `hive-carto-flow-olympus` is the first lens: the Carto operations
+the focused agent ran, grouped by codebase.
+
 ## A harness brick is a manifest
 
 ```clojure
