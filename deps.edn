@@ -4,25 +4,25 @@
  ;;   clojure -Sdeps "$(cat local.deps.edn)" -M:test
  :deps {org.clojure/clojure {:mvn/version "1.12.6"}
         metosin/malli {:mvn/version "0.20.1"}
-        io.github.hive-agi/hive-addon {:mvn/version "1.0.10"}
+        io.github.hive-agi/hive-addon {:mvn/version "1.0.11"}
         io.github.hive-agi/hive-spi {:mvn/version "1.1.1"}
-        io.github.hive-agi/hive-vessel {:mvn/version "0.1.4"}}
+        io.github.hive-agi/hive-vessel {:mvn/version "0.1.5"}}
 
  :aliases
  {:dev {:extra-paths ["dev" "test"]
         :extra-deps {org.clojure/test.check {:mvn/version "1.1.3"}
-                     io.github.hive-agi/hive-test {:mvn/version "0.4.5"}
+                     io.github.hive-agi/hive-test {:mvn/version "0.4.6"}
                      io.github.hive-agi/hive-schemas {:mvn/version "0.1.34"}
-                     io.github.hive-agi/hive-vessel {:mvn/version "0.1.4"}}}
+                     io.github.hive-agi/hive-vessel {:mvn/version "0.1.5"}}}
 
   :test {:extra-paths ["test"]
          :extra-deps {org.clojure/test.check {:mvn/version "1.1.3"}
-                      io.github.hive-agi/hive-test {:mvn/version "0.4.5"}
+                      io.github.hive-agi/hive-test {:mvn/version "0.4.6"}
                       io.github.hive-agi/hive-schemas {:mvn/version "0.1.34"}
-                      io.github.hive-agi/hive-vessel {:mvn/version "0.1.4"}}
+                      io.github.hive-agi/hive-vessel {:mvn/version "0.1.5"}}
          :jvm-opts ["-Xmx1g"]
          :main-opts ["-m" "hive-olympus.test-runner"]}
 
-  :build {:deps {io.github.hive-agi/hive-build {:mvn/version "0.1.17"}}
+  :build {:deps {io.github.hive-agi/hive-build {:mvn/version "0.1.18"}}
           :jvm-opts ["-Xmx1g"]
           :ns-default hive-build.api}}}
