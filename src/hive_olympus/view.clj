@@ -123,23 +123,36 @@
             {:block/type :para :tone :error :text (str "lens failed: " error)}]
     []))
 
+(defn activity-blocks
+  "The focused AGENT's recent log under its own heading, newest first, or
+   nothing when the roster source told us none. Grid cells never show this:
+   the log is what the zoom is for."
+  [{:agent/keys [recent]}]
+  (if (seq recent)
+    [{:block/type :heading :level 2 :text (str "Activity (" (count recent) ")")}
+     {:block/type :list :items (vec recent)}]
+    [{:block/type :heading :level 2 :text "Activity"}
+     {:block/type :para :tone :muted :text "No activity recorded for this agent"}]))
+
 (defn focus-panel
-  "The :ui/show-panel zooming into MODEL's focused agent: its cell, then one
-   section per lens in SECTIONS. nil when nothing is focused."
+  "The :ui/show-panel zooming into MODEL's focused agent: its cell, its recent
+   activity, then one section per lens in SECTIONS. nil when nothing is
+   focused."
   [model sections]
   (when-let [cell (model/focused-cell model)]
-    (let [{:agent/keys [id name]} (:cell/agent cell)
+    (let [{:agent/keys [id name] :as agent} (:cell/agent cell)
           shown (remove #(= :empty (:lens/status %)) sections)]
       {:op :ui/show-panel
        :panel/id focus-panel-id
        :doc {:doc/title (str "Olympus  focus  " (if (str/blank? name) id name))
-             :doc/blocks (into (cell-blocks cell)
-                               (if (seq shown)
-                                 (mapcat section-blocks shown)
-                                 [{:block/type :para :tone :muted
-                                   :text (if (seq sections)
-                                           "No lens has anything on this agent"
-                                           "No lenses registered")}]))}})))
+             :doc/blocks (-> (cell-blocks cell)
+                             (into (activity-blocks agent))
+                             (into (if (seq shown)
+                                     (mapcat section-blocks shown)
+                                     [{:block/type :para :tone :muted
+                                       :text (if (seq sections)
+                                               "No lens has anything on this agent"
+                                               "No lenses registered")}])))}})))
 
 (m/=> focus-panel [:=> [:cat s/GridModel s/LensSections] [:maybe s/ShowPanel]])
 

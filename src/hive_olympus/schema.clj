@@ -19,7 +19,9 @@
   "An observed swarm member. Only id, name and status are required; every
    other key is what the roster source could tell, and the view shows only
    what is present. :agent/exited? marks an agent that already left the swarm
-   and is still shown with how it ended."
+   and is still shown with how it ended. :agent/activity is the latest thing
+   it said; :agent/recent is its recent log, newest first, shown only in the
+   focus zoom so the grid cells stay one screen."
   [:map
    [:agent/id AgentId]
    [:agent/name :string]
@@ -32,6 +34,7 @@
    [:agent/mode {:optional true} :string]
    [:agent/project {:optional true} :string]
    [:agent/activity {:optional true} :string]
+   [:agent/recent {:optional true} [:vector :string]]
    [:agent/seen {:optional true} :string]
    [:agent/done {:optional true} nat-int?]
    [:agent/drones {:optional true} nat-int?]

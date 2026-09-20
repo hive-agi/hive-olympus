@@ -90,18 +90,36 @@
                   {:lens/id :broken :lens/status :error :error "boom"}]]
     (testing "nothing focused, no panel"
       (is (nil? (view/focus-panel (model/grid-model roster model/initial-state) sections))))
-    (testing "the focused agent's cell leads, then each lens under its own heading"
+    (testing "the focused agent's cell leads, then its activity, then each lens under its own heading"
       (let [panel (view/focus-panel grid sections)
             blocks (get-in panel [:doc :doc/blocks])]
         (is (= "olympus/focus" (:panel/id panel)))
         (is (= "Olympus  focus  alpha" (get-in panel [:doc :doc/title])))
         (is (= {:block/type :heading :level 2 :text "> alpha"} (first blocks)))
-        (is (= [{:block/type :heading :level 2 :text "Carto Flow"}
+        (is (= [{:block/type :heading :level 2 :text "Activity"}
+                {:block/type :para :tone :muted :text "No activity recorded for this agent"}
+                {:block/type :heading :level 2 :text "Carto Flow"}
                 {:block/type :list :items ["#1 OK write-form"]}
                 {:block/type :heading :level 2 :text "lens broken"}
                 {:block/type :para :tone :error :text "lens failed: boom"}]
                (subvec blocks 3)))
         (is (m/validate vs/ShowPanel panel))))
+    (testing "an agent that has said things shows its log, newest first"
+      (let [logged (mapv (fn [a] (cond-> a
+                                   (= "a1" (:agent/id a))
+                                   (assoc :agent/recent ["<1m ago  progress: turn 13"
+                                                         "2m ago  progress: turn 12"])))
+                         roster)
+            panel (view/focus-panel (model/grid-model logged {:active-tab 0 :focus "a1"}) sections)
+            blocks (get-in panel [:doc :doc/blocks])]
+        (is (= [{:block/type :heading :level 2 :text "Activity (2)"}
+                {:block/type :list :items ["<1m ago  progress: turn 13"
+                                           "2m ago  progress: turn 12"]}]
+               (subvec blocks 3 5)))
+        (is (m/validate vs/ShowPanel panel))
+        (testing "and the grid cell stays compact -- the log is the zoom's alone"
+          (is (not-any? #(= :list (:block/type %))
+                        (mapcat view/cell-blocks (:tab/cells (first (:grid/tabs (model/grid-model logged {:active-tab 0 :focus "a1"}))))))))))
     (testing "an empty lens is silent, and so is an empty seat"
       (is (some #(= "No lens has anything on this agent" (:text %))
                 (get-in (view/focus-panel grid [(second sections)]) [:doc :doc/blocks])))

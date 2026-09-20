@@ -29,7 +29,8 @@
             [hive-spi.vessel :as render-port]
             [hive-spi.notify :as notify]
             [hive-vessel.renderer :as renderer]
-            [hive-olympus.lens :as lens])
+            [hive-olympus.lens :as lens]
+            [hive-olympus.tool :as olympus-tool])
   (:import (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit)))
 
 (def addon-id-value "hive.olympus")
@@ -225,6 +226,19 @@
 (defn- tab-count [state]
   (count (get-in @state [:model :grid/tabs] [nil])))
 
+(defn- viewport-ops
+  "The observer's own operations on STATE: move the focus, move the tab,
+   re-poll. Both the hooks and the `olympus` tool are built from this one
+   map, so the two surfaces cannot drift apart."
+  [state]
+  {:focus! (fn [agent-id]
+             (navigate! state (fn [st agents] (model/focus st agents agent-id))))
+   :next-tab! (fn [] (navigate! state (fn [st _] (model/next-tab st (tab-count state)))))
+   :prev-tab! (fn [] (navigate! state (fn [st _] (model/prev-tab st (tab-count state)))))
+   :refresh! (fn [] (locking state
+                      (when (= :active (:lifecycle @state))
+                        (refresh-locked! state))))})
+
 (defrecord OlympusAddon [state seed]
   notify/INotify
   (notify-id [_] :olympus)
@@ -249,7 +263,10 @@
   (capabilities [_] #{:olympus :presenter-seat :lens-seat :health-reporting})
   (initialize! [_ runtime-config] (start! state seed runtime-config))
   (shutdown! [_] (stop! state))
-  (tools [_] [])
+  (tools [_]
+    (if (= :active (:lifecycle @state))
+      [(olympus-tool/tool state (viewport-ops state))]
+      []))
   (schema-extensions [_] [])
   (health [_]
     (let [{:keys [lifecycle seat model refresh-ms roster-error roster-warning operator-error operator-snapshot last-error] :as s} @state
@@ -282,26 +299,24 @@
   (excluded-tools [_] #{})
   (hooks [_]
     (if (= :active (:lifecycle @state))
-      {:olympus/register-presenter! (fn [id target] (register-presenter! state id target))
-       :olympus/unregister-presenter! (fn [id] (unregister-presenter! state id))
-       :olympus/register-lens! (fn [id lens] (register-lens! state id lens))
-       :olympus/unregister-lens! (fn [id] (unregister-lens! state id))
-       :olympus/lenses (fn [] (lens-status @state))
-       :olympus/operator-snapshot (fn [] (:operator-snapshot @state))
-       :olympus/observe! (fn [event]
-                           (when-let [observe (get-in @state [:operator-room :observe!])]
-                             (observe event)))
-       :olympus/state (fn [] (some-> (:olympus @state) deref))
-       :olympus/model (fn [] (:model @state))
-       :olympus/panels (fn [] (:panels @state))
-       :olympus/presenters (fn [] (presenter/status (:seat @state)))
-       :olympus/refresh! (fn [] (locking state
-                                  (when (= :active (:lifecycle @state))
-                                    (refresh-locked! state))))
-       :olympus/focus! (fn [agent-id]
-                         (navigate! state (fn [st agents] (model/focus st agents agent-id))))
-       :olympus/next-tab! (fn [] (navigate! state (fn [st _] (model/next-tab st (tab-count state)))))
-       :olympus/prev-tab! (fn [] (navigate! state (fn [st _] (model/prev-tab st (tab-count state)))))}
+      (let [{:keys [focus! next-tab! prev-tab! refresh!]} (viewport-ops state)]
+        {:olympus/register-presenter! (fn [id target] (register-presenter! state id target))
+         :olympus/unregister-presenter! (fn [id] (unregister-presenter! state id))
+         :olympus/register-lens! (fn [id lens] (register-lens! state id lens))
+         :olympus/unregister-lens! (fn [id] (unregister-lens! state id))
+         :olympus/lenses (fn [] (lens-status @state))
+         :olympus/operator-snapshot (fn [] (:operator-snapshot @state))
+         :olympus/observe! (fn [event]
+                             (when-let [observe (get-in @state [:operator-room :observe!])]
+                               (observe event)))
+         :olympus/state (fn [] (some-> (:olympus @state) deref))
+         :olympus/model (fn [] (:model @state))
+         :olympus/panels (fn [] (:panels @state))
+         :olympus/presenters (fn [] (presenter/status (:seat @state)))
+         :olympus/refresh! refresh!
+         :olympus/focus! focus!
+         :olympus/next-tab! next-tab!
+         :olympus/prev-tab! prev-tab!})
       {})))
 
 (defn addon-ctor

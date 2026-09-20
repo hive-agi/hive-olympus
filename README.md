@@ -41,11 +41,34 @@ marks that presenter degraded and it is retried on the next refresh.
 `:olympus/lenses` (id -> `:idle`, `:ok`, `:empty` or `:error`). A lens is
 `(fn [Agent] -> Doc | nil)`.
 
+## Asking instead of watching: the `olympus` tool
+
+The grid is always painted; the tool is how a caller *asks*.
+
+| command | answers |
+|---|---|
+| `agents` | every agent with status, route, task and last activity (`status=working\|idle\|blocked\|error` narrows) |
+| `activity` | one agent's recent log, newest first — what that subagent has actually been doing |
+| `watch` | zooms the panels into one agent **and** answers its activity, in one call |
+| `unwatch` | closes the zoom |
+| `next-tab` / `prev-tab` | moves the grid |
+| `refresh` | re-polls the roster now |
+| `panels` | what the vessel is currently showing |
+
+`agent` takes an id, a name, or any unique substring of either; an ambiguous
+needle refuses and lists the ids rather than guessing. The tool moves the
+observer's own viewport and nothing else — it can neither steer nor stop an
+agent. Its viewport operations are the same map the hooks are built from, so
+the two surfaces cannot drift.
+
 ## Zooming in: the focus panel and lenses
 
 Focusing an agent (`:olympus/focus!`) opens one more panel, `olympus/focus`: the
-agent's cell, then one section per registered lens, each lens's document under its
-own heading. A lens answering nil is silent; a lens that throws or answers an
+agent's cell, then its **recent activity** (the last 20 shouts, newest first and
+aged, e.g. `<1m ago  turn 13: tool_calls=["bash"]`), then one section per
+registered lens, each lens's document under its own heading. A grid cell shows
+only the latest line; the log is what the zoom is for, and it survives the agent
+leaving the swarm for the linger window. A lens answering nil is silent; a lens that throws or answers an
 invalid document is shown as failed and marks core degraded, without touching the
 other lenses. Clearing focus closes the panel. No new vessel primitive: the zoom is
 a `:ui/show-panel` like every tab, so every harness already shows it.

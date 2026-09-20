@@ -34,6 +34,44 @@
     (testing "a drone whose ling is not observable still shows, after the lings"
       (is (= "gone" (:agent/parent (last agents)))))))
 
+(deftest an-agent-carries-its-recent-log-not-only-its-last-word
+  (let [now 1789900000000
+        shouts [{:timestamp (- now 30000) :event-type :progress :message "bb-ling turn 13 — tool_calls=[\"bash\"]"}
+                {:timestamp (- now 300000) :event-type :progress :message "bb-ling turn 12 — tool_calls=[\"bash\"]"}
+                {:timestamp (- now 7200000) :event-type :started :message "bb-ling started"}
+                {:timestamp (- now 60000) :event-type :progress :message "   "}]]
+    (testing "the log is newest first and aged; a bodyless shout still names its event"
+      (is (= ["<1m ago  turn 13: tool_calls=[\"bash\"]"
+              "1m ago  progress"
+              "5m ago  turn 12: tool_calls=[\"bash\"]"
+              "2h ago  started"]
+             (roster/activity-log shouts now))))
+    (testing "limit caps it, keeping the newest"
+      (is (= ["<1m ago  turn 13: tool_calls=[\"bash\"]"] (roster/activity-log shouts now 1)))
+      (is (= [] (roster/activity-log [] now))))
+    (testing "a shout with neither body nor event says nothing at all"
+      (is (= [] (roster/activity-log [{:timestamp now :message "  "}] now))))
+    (testing "without a clock the line is the body alone"
+      (is (= ["turn 13: tool_calls=[\"bash\"]"] (roster/activity-log [(first shouts)] nil))))
+    (testing "agents attach the log, and :agent/activity still holds the latest"
+      (let [rows (roster/agents slaves (fn [id] (when (= "l1" id) shouts)) now)
+            alpha (first (filter #(= "l1" (:agent/id %)) rows))
+            quiet (first (filter #(= "l2" (:agent/id %)) rows))]
+        (is (= 4 (count (:agent/recent alpha))))
+        (is (= "turn 13: tool_calls=[\"bash\"]" (:agent/activity alpha))
+            "the cell still shows one line")
+        (is (= (first (:agent/recent alpha)) (str "<1m ago  " (:agent/activity alpha)))
+            "the log's newest line is the cell's line, aged")
+        (is (not (contains? quiet :agent/recent))
+            "an agent with nothing to say carries no empty log")
+        (is (m/validate s/Roster rows))))
+    (testing "the log survives the agent leaving the swarm"
+      (let [ghost (roster/exited-agent (assoc {:agent/id "l1" :agent/name "alpha" :agent/status :working}
+                                              :agent/recent (roster/activity-log shouts now))
+                                       (roster/final-shout shouts) now)]
+        (is (= 4 (count (:agent/recent ghost))))
+        (is (true? (:agent/exited? ghost)))))))
+
 (def venice-slave
   {:slave/id "obs-venice" :slave/name "obs-venice" :slave/depth 1 :slave/status :working
    :slave/current-task nil :slave/project-id "hive-olympus" :slave/alive? true

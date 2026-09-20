@@ -109,6 +109,31 @@
       event event
       :else nil)))
 
+(def max-activity-lines
+  "How many recent shouts an Agent carries for the focus zoom. The grid cells
+   show only the latest; the log is what an observer opens on purpose."
+  20)
+
+(defn activity-line
+  "One SHOUT as a log line, \"4m ago  progress: turn 13\", or nil when it says
+   nothing. NOW is epoch ms and may be nil, which drops the age."
+  [now {:keys [timestamp] :as shout}]
+  (when-let [body (activity-text shout)]
+    (if (and now timestamp (pos? timestamp))
+      (str (seen-text (- now timestamp)) "  " body)
+      body)))
+
+(defn activity-log
+  "The recent SHOUTS as log lines, newest first, at most LIMIT of them
+   (default `max-activity-lines`). Shouts that say nothing are dropped."
+  ([shouts now] (activity-log shouts now max-activity-lines))
+  ([shouts now limit]
+   (->> shouts
+        (sort-by #(or (:timestamp %) 0) >)
+        (take limit)
+        (keep #(activity-line now %))
+        vec)))
+
 (defn slave->agent
   "Agent for the swarm SLAVE map. SHOUT is its latest hivemind shout or nil;
    NOW is epoch ms, used only to age the last activity."
@@ -147,11 +172,15 @@
   "Agents for the observable members of SLAVES, each ling followed by its
    drones, a ling carrying its live drone count. Drones whose ling is not
    observable follow the lings. SHOUTS-OF is (fn [agent-id] -> shouts) and
-   NOW epoch ms; both optional."
+   NOW epoch ms; both optional. Every agent carries its recent shout log."
   ([slaves] (agents slaves (constantly nil) nil))
   ([slaves shouts-of now]
    (let [live (filter observable? slaves)
-         ->agent #(slave->agent % (latest-shout (shouts-of (str (:slave/id %)))) now)
+         ->agent (fn [slave]
+                   (let [shouts (shouts-of (str (:slave/id slave)))
+                         agent (slave->agent slave (latest-shout shouts) now)
+                         log (activity-log shouts now)]
+                     (cond-> agent (seq log) (assoc :agent/recent log))))
          lings (filterv #(= 1 (:slave/depth %)) live)
          drones (mapv ->agent (filter #(= 2 (:slave/depth %)) live))
          by-parent (group-by :agent/parent drones)
