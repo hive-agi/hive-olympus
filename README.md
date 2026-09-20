@@ -151,6 +151,7 @@ vessel hook already has hive-vessel on the classpath. A host reached through
 | hive-olympus-vim | `:vessel/dispatch!` + `:vessel/target` | host dispatch |
 | hive-olympus-vscode | `:vessel/target` | host target |
 | hive-olympus-emacs | none | `eval-port-target` over `hive-emacs.client/eval-elisp!` |
+| hive-olympus-universe | `:vessel/target` | host target, `:text` onto the canvas |
 
 ## Develop
 
