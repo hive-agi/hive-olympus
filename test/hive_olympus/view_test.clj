@@ -130,6 +130,44 @@
         (is (= [{:op :ui/close-panel :panel/id "olympus/focus"}]
                (view/delta with-focus (view/panels grid))))))))
 
+(deftest the-transcript-panel-shows-what-a-subagent-actually-said
+  (testing "nothing asked, nothing painted"
+    (is (nil? (view/transcript-panel nil))))
+  (let [panel (view/transcript-panel
+               {:agent-id "vd-ops-a" :count 2 :total 9 :truncated? true
+                :exchanges [{:turn 9 :role "assistant" :text "the repaint is unconditional"
+                             :tools ["carto search" "read-form"]}
+                            {:turn 8 :role "user" :text "find the flicker"}]})
+        blocks (get-in panel [:doc :doc/blocks])]
+    (is (= "olympus/transcript" (:panel/id panel)))
+    (is (= :ui/show-panel (:op panel)) "no new primitive: every vessel already paints this")
+    (is (str/includes? (get-in panel [:doc :doc/title]) "vd-ops-a"))
+    (testing "the observer is told what was left out"
+      (is (some #(and (= :para (:block/type %))
+                      (str/includes? (:text %) "2 of 9")
+                      (str/includes? (:text %) "raise the limit"))
+                blocks)))
+    (testing "each turn names its speaker and the tools it called"
+      (is (some #(= "turn 9  assistant" (:text %)) blocks))
+      (is (some #(= [["tools" "carto search, read-form"]] (:fields %)) blocks))
+      (is (some #(= "find the flicker" (:text %)) blocks))))
+  (testing "a ranked hit shows its score"
+    (is (some #(= "turn 2  assistant  score 0.91" (:text %))
+              (get-in (view/transcript-panel
+                       {:agent-id "a" :count 1 :total 1
+                        :exchanges [{:turn 2 :role "assistant" :text "x" :score 0.91}]})
+                      [:doc :doc/blocks]))))
+  (testing "an error is painted, not swallowed: asking and seeing nothing is the worst answer"
+    (let [blocks (get-in (view/transcript-panel {:agent-id "gone" :error "no transcript store for gone"})
+                         [:doc :doc/blocks])]
+      (is (some #(and (= :error (:tone %)) (str/includes? (:text %) "no transcript store")) blocks))))
+  (testing "an empty transcript reads as empty, not as a failure"
+    (let [blocks (get-in (view/transcript-panel {:agent-id "quiet" :count 0 :total 0
+                                                 :exchanges [] :note "no transcript recorded for this agent"})
+                         [:doc :doc/blocks])]
+      (is (some #(= "no transcript recorded for this agent" (:text %)) blocks))
+      (is (not-any? #(= :error (:tone %)) blocks)))))
+
 (deftest status-tones
   (is (= {:idle :muted :working :info :blocked :warn :error :error :spawning :muted}
          view/status-tone))

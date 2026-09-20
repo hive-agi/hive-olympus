@@ -33,7 +33,17 @@
                        (swap! state assoc :model (model/grid-model roster (assoc model/initial-state :focus id))))
              :next-tab! (fn [] {:tab (swap! tabs inc)})
              :prev-tab! (fn [] {:tab (swap! tabs dec)})
-             :refresh! (fn [] (swap! state update :refreshes (fnil inc 0)))}]
+             :refresh! (fn [] (swap! state update :refreshes (fnil inc 0)))
+             :transcript! (fn [params]
+                            (swap! state assoc :asked params)
+                            {:agent-id (:agent-id params) :count 2 :total 2
+                             :exchanges [{:turn 2 :role "assistant" :text "reading the panel code"}
+                                         {:turn 1 :role "user" :text "find the flicker"}]})
+             :search! (fn [params]
+                        (swap! state assoc :asked params)
+                        {:agent-id (:agent-id params) :query (:query params) :count 1 :total 1
+                         :exchanges [{:turn 2 :role "assistant" :text "reading the panel code" :score 0.91}]})
+             :close-transcript! (fn [] (swap! state update :closed (fnil inc 0)) nil)}]
     {:state state :nav nav :focused focused}))
 
 (defn- ask [{:keys [state nav]} params]
@@ -105,6 +115,45 @@
         (is (nil? (:focused b)))
         (is (true? (:closed? b)))
         (is (nil? @(:focused c)))))))
+
+(deftest transcript-asks-the-port-with-the-project-that-locates-the-store
+  ;; A transcript store lives at <root>/<project-id>/<agent-id>. The tool
+  ;; holds the only thing that knows both: the roster's Agent. Dropping the
+  ;; project answers from the wrong partition rather than failing.
+  (let [{:keys [state] :as c} (core)
+        out (ask c {:command "transcript" :agent "review-engine-asr" :limit 5})]
+    (is (= {:agent-id "a1" :project-id "vtranslate" :limit 5} (:asked @state)))
+    (is (= 2 (:count out)))
+    (is (= "olympus/transcript" (:panel out)) "the answer names the panel it also painted")
+    (is (= "a1" (get-in out [:agent :id])) "the agent row travels with the exchanges")
+    (is (= [2 1] (mapv :turn (:exchanges out))))))
+
+(deftest search-carries-the-query-and-answers-ranked-exchanges
+  (let [{:keys [state] :as c} (core)
+        out (ask c {:command "search" :agent "a1" :query "flicker" :role "assistant"})]
+    (is (= "flicker" (:query (:asked @state))))
+    (is (= "assistant" (:role (:asked @state))))
+    (is (= "vtranslate" (:project-id (:asked @state))))
+    (is (= 0.91 (:score (first (:exchanges out)))))))
+
+(deftest closing-the-zoom-closes-the-transcript-with-it
+  (let [{:keys [state focused] :as c} (core)]
+    (ask c {:command "watch" :agent "a1"})
+    (ask c {:command "transcript" :agent "a1"})
+    (is (= "a1" @focused))
+    (let [out (ask c {:command "unwatch"})]
+      (is (nil? @focused))
+      (is (:closed? out))
+      (is (= 1 (:closed @state)) "an observer who stops watching is not left with a stale transcript"))
+    (testing "the transcript panel can also be closed on its own"
+      (ask c {:command "close-transcript"})
+      (is (= 2 (:closed @state))))))
+
+(deftest an-agent-that-does-not-resolve-never-reaches-the-port
+  (let [{:keys [state] :as c} (core)]
+    (is (:error (ask c {:command "transcript" :agent "nope"})))
+    (is (:error (ask c {:command "transcript"})))
+    (is (nil? (:asked @state)) "an unresolved needle is refused before any store is opened")))
 
 (deftest the-viewport-commands-move-only-the-view
   (let [c (core)]

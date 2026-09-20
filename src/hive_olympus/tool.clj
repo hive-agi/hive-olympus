@@ -107,26 +107,48 @@
    :lenses (mapv (fn [s] {:lens (:lens/id s) :status (:lens/status s)})
                  (or lens-sections []))})
 
+(defn transcript-params
+  "Port params for AGENT, merged over EXTRA: its id, and the project that
+   partitions its transcript store, which is what makes a ling that has
+   already finished findable on disk."
+  [agent extra]
+  (cond-> (assoc extra :agent-id (:agent/id agent))
+    (present (:agent/project agent)) (assoc :project-id (:agent/project agent))))
+
 (defn answer
   "Run COMMAND against the core. STATE is the core's state atom and NAV the
-   viewport operations {:focus! :next-tab! :prev-tab! :refresh!}. Returns the
-   answer map, or {:error ...}."
-  [state nav {:keys [command agent status limit]}]
-  (let [snapshot #(deref state)]
+   viewport operations {:focus! :next-tab! :prev-tab! :refresh! :transcript!
+   :search! :close-transcript!}. Returns the answer map, or {:error ...}."
+  [state nav {:keys [command agent status limit query role]}]
+  (let [snapshot #(deref state)
+        with-agent (fn [f]
+                     (let [{:keys [agent] :as r} (resolve-agent (:roster (snapshot)) agent)]
+                       (if agent (f agent) r)))]
     (case command
       "agents" (agents-answer (snapshot) status)
 
-      "activity" (let [{:keys [agent] :as r} (resolve-agent (:roster (snapshot)) agent)]
-                   (if agent (activity-answer agent limit) r))
+      "activity" (with-agent #(activity-answer % limit))
 
-      "watch" (let [{:keys [agent] :as r} (resolve-agent (:roster (snapshot)) agent)]
-                (if agent
-                  (do ((:focus! nav) (:agent/id agent))
-                      (focus-answer (snapshot) agent))
-                  r))
+      "watch" (with-agent (fn [a]
+                            ((:focus! nav) (:agent/id a))
+                            (focus-answer (snapshot) a)))
 
       "unwatch" (do ((:focus! nav) nil)
+                    ((:close-transcript! nav))
                     {:focused nil :panel "olympus/focus" :closed? true})
+
+      "transcript" (with-agent
+                     (fn [a]
+                       (-> ((:transcript! nav) (transcript-params a {:limit limit}))
+                           (assoc :agent (agent-row a) :panel "olympus/transcript"))))
+
+      "search" (with-agent
+                 (fn [a]
+                   (-> ((:search! nav) (transcript-params a {:limit limit :query query :role role}))
+                       (assoc :agent (agent-row a) :panel "olympus/transcript"))))
+
+      "close-transcript" (do ((:close-transcript! nav))
+                             {:panel "olympus/transcript" :closed? true})
 
       "next-tab" (let [st ((:next-tab! nav))]
                    {:tab (inc (or (:tab st) 0)) :tabs (count (:grid/tabs (:model (snapshot))))})
@@ -142,7 +164,8 @@
                               (:panels (snapshot)))}
 
       {:error (str "unknown command: " (pr-str command))
-       :commands ["agents" "activity" "watch" "unwatch" "next-tab" "prev-tab" "refresh" "panels"]})))
+       :commands ["agents" "activity" "transcript" "search" "watch" "unwatch"
+                  "close-transcript" "next-tab" "prev-tab" "refresh" "panels"]})))
 
 (defn tool
   "The `olympus` tool-def over the core's STATE atom and NAV viewport ops."
@@ -151,21 +174,30 @@
    :description
    (str "Observe the agent swarm Olympus is painting. "
         "agents: every agent with status, route, task and last activity (status=working|idle|blocked|error narrows). "
-        "activity: one agent's recent log, newest first -- what that subagent has actually been doing. "
+        "activity: one agent's recent shouts, newest first. "
+        "transcript: what one subagent actually exchanged with its model, turn by turn, tool calls included -- "
+        "it works for a ling that has already finished. "
+        "search: rank one agent's transcript against a natural-language query. "
+        "transcript and search also paint the olympus/transcript panel, so the answer is on screen as well as here. "
         "watch: zoom the panels into one agent and answer its activity. unwatch: close the zoom. "
+        "close-transcript: close the transcript panel. "
         "next-tab/prev-tab: move the grid. refresh: re-poll now. panels: what the vessel is currently showing. "
         "Read-only: it moves your own view, never an agent.")
    :inputSchema
    {:type "object"
     :properties {"command" {:type "string"
-                            :enum ["agents" "activity" "watch" "unwatch"
-                                   "next-tab" "prev-tab" "refresh" "panels"]}
+                            :enum ["agents" "activity" "transcript" "search" "watch" "unwatch"
+                                   "close-transcript" "next-tab" "prev-tab" "refresh" "panels"]}
                  "agent" {:type "string"
-                          :description "[activity|watch] agent id or name; a unique substring is enough"}
+                          :description "[activity|transcript|search|watch] agent id or name; a unique substring is enough"}
+                 "query" {:type "string"
+                          :description "[search] what to look for in the transcript"}
+                 "role" {:type "string"
+                         :description "[search] keep only this speaker: user, assistant, tool or system"}
                  "status" {:type "string"
                            :description "[agents] keep only this status"}
                  "limit" {:type "integer"
-                          :description "[activity] how many log lines (default 20)"}}
+                          :description "[activity|transcript|search] how many entries (default 20 shouts, 40 exchanges)"}}
     :required ["command"]}
    :handler
    (fn [params]
@@ -174,6 +206,8 @@
                     (answer state nav {:command (some-> (get* :command) str)
                                        :agent (get* :agent)
                                        :status (get* :status)
+                                       :query (get* :query)
+                                       :role (get* :role)
                                        :limit (some-> (get* :limit) long)})
                     (catch Throwable t
                       {:error (or (ex-message t) (str t))}))]

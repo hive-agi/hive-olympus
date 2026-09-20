@@ -48,9 +48,12 @@ The grid is always painted; the tool is how a caller *asks*.
 | command | answers |
 |---|---|
 | `agents` | every agent with status, route, task and last activity (`status=working\|idle\|blocked\|error` narrows) |
-| `activity` | one agent's recent log, newest first — what that subagent has actually been doing |
+| `activity` | one agent's recent log, newest first: what that subagent has actually been doing |
+| `transcript` | what one subagent actually exchanged with its model, turn by turn, tool calls included |
+| `search` | ranks one agent's transcript against a natural-language query |
 | `watch` | zooms the panels into one agent **and** answers its activity, in one call |
-| `unwatch` | closes the zoom |
+| `unwatch` | closes the zoom, and the transcript with it |
+| `close-transcript` | closes the transcript panel on its own |
 | `next-tab` / `prev-tab` | moves the grid |
 | `refresh` | re-polls the roster now |
 | `panels` | what the vessel is currently showing |
@@ -60,6 +63,28 @@ needle refuses and lists the ids rather than guessing. The tool moves the
 observer's own viewport and nothing else — it can neither steer nor stop an
 agent. Its viewport operations are the same map the hooks are built from, so
 the two surfaces cannot drift.
+
+## Reading the exchanges: the transcript port
+
+`activity` answers the hivemind shouts an agent broadcast. `transcript` answers
+what it actually said: every turn of the conversation with its model, the tool
+names each turn called, and the cost, newest turn first.
+
+hive-agent already persists this per agent and indexes it for vector search, so
+this library owns no store. `hive-olympus.transcript/live-transcript-port`
+resolves that store lazily at call time, exactly as the roster resolves the
+swarm, and answers `{:error ...}` rather than throwing while hive-agent is
+absent. Inject `:olympus/transcript-port` to replace it.
+
+A transcript store is partitioned as `<root>/<project-id>/<agent-id>`, so the
+tool passes the project the roster's Agent carries. That is what lets an
+observer read a ling **after** it has finished: the store is reopened from disk
+when the live registry no longer holds one.
+
+`transcript` and `search` also paint `olympus/transcript`, a panel like any
+other, so the answer is on screen in Emacs, Vim, Neovim, VS Code or tmux as well
+as in the tool result. An error is painted too: asking a question and seeing
+nothing is the worst possible answer.
 
 ## Zooming in: the focus panel and lenses
 

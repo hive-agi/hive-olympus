@@ -154,6 +154,55 @@
                                                "No lens has anything on this agent"
                                                "No lenses registered")}])))}})))
 
+(def transcript-panel-id
+  "Panel id of the transcript an observer opened on purpose."
+  "olympus/transcript")
+
+(defn exchange-blocks
+  "One exchange as blocks: a heading naming the turn and the speaker, the
+   message body, and the tools that turn called."
+  [{:keys [turn role text tools clipped? length score]}]
+  (into [{:block/type :heading
+          :level 2
+          :text (str (when turn (str "turn " turn "  "))
+                     (or role "?")
+                     (when score (str "  score " (format "%.2f" (double score)))))}]
+        (cond-> []
+          text (conj {:block/type :para :text text})
+          clipped? (conj {:block/type :para :tone :muted
+                          :text (str "clipped here; " length " characters in full")})
+          (seq tools) (conj {:block/type :fields
+                             :fields [["tools" (str/join ", " tools)]]}))))
+
+(defn transcript-panel
+  "The `:ui/show-panel` showing ANSWER, the transcript port's reply about one
+   agent. An error is a panel too: an observer who asked a question has to
+   see why nothing came back."
+  [{:keys [agent-id exchanges total query error note truncated?] shown :count :as answer}]
+  (when answer
+    {:op :ui/show-panel
+     :panel/id transcript-panel-id
+     :doc {:doc/title (str "Olympus  transcript  " (or agent-id "?"))
+           :doc/blocks
+           (into [{:block/type :heading
+                   :level 1
+                   :text (if query
+                           (str "Transcript search  " (pr-str query))
+                           (str "Transcript  " (or agent-id "?")))}]
+                 (cond
+                   error
+                   [{:block/type :para :tone :error :text error}]
+
+                   (seq exchanges)
+                   (into [{:block/type :para :tone :muted
+                           :text (str shown " of " total " exchanges, newest first"
+                                      (when truncated? "; raise the limit to see more"))}]
+                         (mapcat exchange-blocks exchanges))
+
+                   :else
+                   [{:block/type :para :tone :muted
+                     :text (or note "no exchanges recorded")}]))}}))
+
 (m/=> focus-panel [:=> [:cat s/GridModel s/LensSections] [:maybe s/ShowPanel]])
 
 (defn delta

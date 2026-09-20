@@ -30,7 +30,8 @@
             [hive-spi.notify :as notify]
             [hive-vessel.renderer :as renderer]
             [hive-olympus.lens :as lens]
-            [hive-olympus.tool :as olympus-tool])
+            [hive-olympus.tool :as olympus-tool]
+            [hive-olympus.transcript :as transcript])
   (:import (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit)))
 
 (def addon-id-value "hive.olympus")
@@ -44,6 +45,18 @@
       (symbol? f) (let [v (requiring-resolve f)] (fn [] (v)))
       (string? f) (let [v (requiring-resolve (symbol f))] (fn [] (v)))
       :else (roster/live-roster-fn on-warning nil nil (:olympus/linger-ms config)))))
+
+(defn- transcript-port-of
+  "The transcript port from CONFIG: an explicit map of ops, a 0-arity fn, a
+   symbol or string naming one, or the live hive-agent adapter."
+  [config]
+  (let [p (:olympus/transcript-port config)]
+    (cond
+      (map? p) p
+      (fn? p) (p)
+      (symbol? p) ((requiring-resolve p))
+      (string? p) ((requiring-resolve (symbol p)))
+      :else (transcript/live-transcript-port))))
 
 (defn- refresh-renderers! [state]
   (let [{:keys [renderer-source registered-renderers seat panels]} @state
@@ -75,13 +88,15 @@
         (swap! state assoc :operator-snapshot ((:snapshot operator-room)) :operator-error nil)
         (catch Throwable t
           (swap! state assoc :operator-error (or (ex-message t) (str t))))))
-    (let [{:keys [roster operator-snapshot operator-error]} @state
+    (let [{:keys [roster operator-snapshot operator-error transcript]} @state
           grid (model/grid-model roster @olympus)
           sections (when-let [cell (model/focused-cell grid)]
                      (lens/observe (if lenses @lenses {}) (:cell/agent cell)))
           current (cond-> (view/panels grid)
                     sections
                     (conj (view/focus-panel grid sections))
+                    transcript
+                    (conj (view/transcript-panel transcript))
                     operator-room
                     (conj (operator/panel
                            (cond-> (or operator-snapshot {:requests [] :events []})
@@ -98,6 +113,32 @@
         (swap! olympus f roster)
         (refresh-locked! state)
         @olympus))))
+
+(defn- show-transcript!
+  "Ask the transcript port's OP with PARAMS, keep the answer as what the
+   transcript panel shows, and repaint. The port is called outside the lock:
+   a store read must not stall the refresh loop. Returns the answer, so a
+   caller is told exactly what the panel was given."
+  [state op params]
+  (let [port (:transcript-port @state)
+        answer (if-let [f (get port op)]
+                 (try (f params) (catch Throwable t {:error (or (ex-message t) (str t))}))
+                 {:error "no transcript port configured"})]
+    (locking state
+      (swap! state assoc :transcript answer)
+      (when (= :active (:lifecycle @state))
+        (refresh-locked! state)))
+    answer))
+
+(defn- close-transcript!
+  "Drop the transcript panel. It vanishes from the panel list, which the
+   presenter delta turns into a close."
+  [state]
+  (locking state
+    (swap! state dissoc :transcript)
+    (when (= :active (:lifecycle @state))
+      (refresh-locked! state)))
+  nil)
 
 (defn- daemon-factory []
   (reify ThreadFactory
@@ -145,6 +186,7 @@
           (reset! state {:lifecycle :active
                          :refresh-ms refresh-ms
                          :roster-fn (roster-fn-of config warn!)
+                         :transcript-port (transcript-port-of config)
                          :olympus (atom model/initial-state)
                          :seat seat
                          :lenses (lens/create)
@@ -228,8 +270,8 @@
 
 (defn- viewport-ops
   "The observer's own operations on STATE: move the focus, move the tab,
-   re-poll. Both the hooks and the `olympus` tool are built from this one
-   map, so the two surfaces cannot drift apart."
+   re-poll, open and close the transcript. Both the hooks and the `olympus`
+   tool are built from this one map, so the two surfaces cannot drift apart."
   [state]
   {:focus! (fn [agent-id]
              (navigate! state (fn [st agents] (model/focus st agents agent-id))))
@@ -237,7 +279,10 @@
    :prev-tab! (fn [] (navigate! state (fn [st _] (model/prev-tab st (tab-count state)))))
    :refresh! (fn [] (locking state
                       (when (= :active (:lifecycle @state))
-                        (refresh-locked! state))))})
+                        (refresh-locked! state))))
+   :transcript! (fn [params] (show-transcript! state :conversation params))
+   :search! (fn [params] (show-transcript! state :search params))
+   :close-transcript! (fn [] (close-transcript! state))})
 
 (defrecord OlympusAddon [state seed]
   notify/INotify
