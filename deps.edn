@@ -3,7 +3,7 @@
  ;; Sibling checkouts during development go in the untracked local.deps.edn:
  ;;   clojure -Sdeps "$(cat local.deps.edn)" -M:test
  :deps {org.clojure/clojure {:mvn/version "1.12.6"}
-        metosin/malli {:mvn/version "0.20.1"}
+        metosin/malli {:mvn/version "0.20.2"}
         io.github.hive-agi/hive-addon {:mvn/version "1.0.15"}
         io.github.hive-agi/hive-spi {:mvn/version "1.4.1"}
         io.github.hive-agi/hive-vessel {:mvn/version "0.1.12"}}
