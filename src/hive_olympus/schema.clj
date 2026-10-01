@@ -15,13 +15,26 @@
 (def Kind
   [:enum :ling :drone])
 
+(def Progress
+  "Plan progress: DONE of TOTAL entries, DONE never above TOTAL."
+  [:and
+   {:gen/schema [:tuple [:int {:min 0 :max 8}] [:int {:min 1 :max 8}]]
+    :gen/fmap (fn [[done total]] {:done (min done total) :total total})}
+   [:map [:done nat-int?] [:total pos-int?]]
+   [:fn {:error/message "done exceeds total"} (fn [{:keys [done total]}] (<= done total))]])
+
+(def CostUsd
+  "Spend so far in US dollars."
+  [:double {:min 0.0 :max 1.0e6}])
+
 (def Agent
   "An observed swarm member. Only id, name and status are required; every
    other key is what the roster source could tell, and the view shows only
    what is present. :agent/exited? marks an agent that already left the swarm
    and is still shown with how it ended. :agent/activity is the latest thing
    it said; :agent/recent is its recent log, newest first, shown only in the
-   focus zoom so the grid cells stay one screen."
+   focus zoom so the grid cells stay one screen. :agent/progress is its plan
+   progress and :agent/cost-usd what it has spent."
   [:map
    [:agent/id AgentId]
    [:agent/name :string]
@@ -38,6 +51,8 @@
    [:agent/seen {:optional true} :string]
    [:agent/done {:optional true} nat-int?]
    [:agent/drones {:optional true} nat-int?]
+   [:agent/progress {:optional true} Progress]
+   [:agent/cost-usd {:optional true} CostUsd]
    [:agent/exited? {:optional true} :boolean]])
 
 (def Roster
