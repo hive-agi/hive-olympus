@@ -75,6 +75,41 @@
     (is (= [["id" "x"] ["activity" "Loop failed: axon API error: 402"] ["cell" "row 1, col 1"]]
            (:fields (nth blocks 2))))))
 
+(deftest a-cell-shows-plan-progress-as-a-bar-and-spend-as-a-field
+  (let [[panel] (render [{:agent/id "l1" :agent/name "scout" :agent/status :working
+                          :agent/progress {:done 3 :total 5} :agent/cost-usd 0.01234}
+                         {:agent/id "l2" :agent/name "done" :agent/status :idle
+                          :agent/progress {:done 4 :total 4} :agent/cost-usd 12.5}
+                         {:agent/id "l3" :agent/name "plain" :agent/status :idle}]
+                        model/initial-state)
+        blocks (get-in panel [:doc :doc/blocks])]
+    (testing "the bar sits between the status and the fields"
+      (is (= {:block/type :para :text "[######----] 3/5" :tone :info} (nth blocks 2)))
+      (is (= [["id" "l1"] ["progress" "3/5 (60%)"] ["cost" "$0.0123"] ["cell" "row 1, col 1"]]
+             (:fields (nth blocks 3)))))
+    (testing "a finished plan reads as success; dollars round to cents from one up"
+      (is (= {:block/type :para :text "[##########] 4/4" :tone :success} (nth blocks 6)))
+      (is (some #{["cost" "$12.50"]} (:fields (nth blocks 7)))))
+    (testing "an agent without a plan gets no bar"
+      (is (= [:heading :para :fields] (mapv :block/type (subvec blocks 8)))))
+    (is (m/validate vs/ShowPanel panel))))
+
+(hst/deftrifecta-from-schema progress-bar
+  hive-olympus.view/progress-bar
+  {:in s/Progress
+   :out :string
+   :rel (fn [{:keys [done total]} out]
+          (let [bar (subs out 1 (inc view/bar-width))
+                filled (count (filter #{\#} bar))]
+            (and (str/ends-with? out (str "] " done "/" total))
+                 (= view/bar-width (count bar))
+                 (= (= done total) (= filled view/bar-width))
+                 (<= (* filled total) (* view/bar-width done) (* (inc filled) total)))))
+   :classify (fn [{:keys [done total]} _] (if (= done total) :complete :partial))
+   :classify-domain #{:complete :partial}
+   :classify-floor 2
+   :num-tests 60})
+
 (deftest the-empty-roster-still-shows-a-panel
   (is (= [{:op :ui/show-panel
            :panel/id "olympus/tab-1"

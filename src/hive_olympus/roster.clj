@@ -134,6 +134,20 @@
         (keep #(activity-line now %))
         vec)))
 
+(defn progress-of
+  "Progress for a slave's :ling/progress map {:done n :total n}, or nil when
+   there is no plan. DONE is clamped into [0, TOTAL]."
+  [{:keys [done total]}]
+  (when (and (integer? total) (pos? total))
+    {:done (-> (if (integer? done) done 0) (max 0) (min total) long)
+     :total (long total)}))
+
+(defn cost-of
+  "Spend in dollars for a slave's :ling/cost-usd, or nil when unknown."
+  [cost]
+  (when (and (number? cost) (<= 0.0 cost 1.0e6))
+    (double cost)))
+
 (defn slave->agent
   "Agent for the swarm SLAVE map. SHOUT is its latest hivemind shout or nil;
    NOW is epoch ms, used only to age the last activity."
@@ -144,7 +158,9 @@
          depth (:slave/depth slave)
          task (or (task-text (:slave/current-task slave)) (clip (:task shout)))
          last-ms (max (or (:slave/last-active-at slave) 0) (or (:timestamp shout) 0))
-         done (:slave/tasks-completed slave)]
+         done (:slave/tasks-completed slave)
+         progress (progress-of (:ling/progress slave))
+         cost (cost-of (:ling/cost-usd slave))]
      (cond-> {:agent/id id
               :agent/name (if (and (string? nm) (not (str/blank? nm))) nm id)
               :agent/status (get slave-status->status (:slave/status slave) :idle)}
@@ -158,7 +174,9 @@
        (text (:slave/project-id slave)) (assoc :agent/project (text (:slave/project-id slave)))
        (activity-text shout) (assoc :agent/activity (activity-text shout))
        (and now (pos? last-ms)) (assoc :agent/seen (seen-text (- now last-ms)))
-       (nat-int? done) (assoc :agent/done done)))))
+       (nat-int? done) (assoc :agent/done done)
+       progress (assoc :agent/progress progress)
+       cost (assoc :agent/cost-usd cost)))))
 
 (defn observable?
   "True for a live ling or drone with an id."
@@ -329,6 +347,9 @@
            (do (on-warning (str "roster source " live-source " unavailable; showing no agents"))
                [])))
        {:olympus/close close}))))
+
+(m/=> progress-of [:=> [:cat :any] [:maybe s/Progress]])
+(m/=> cost-of [:=> [:cat :any] [:maybe s/CostUsd]])
 
 (m/=> slave->agent [:function
                     [:=> [:cat [:map [:slave/id :any]]] s/Agent]

@@ -2,7 +2,8 @@
   (:require [clojure.test :refer [deftest is testing]]
             [hive-olympus.roster :as roster]
             [hive-olympus.schema :as s]
-            [malli.core :as m]))
+            [malli.core :as m]
+            [hive-schemas.test :as hst]))
 
 (def slaves
   [{:slave/id "h" :slave/depth 0 :slave/status :idle}
@@ -217,3 +218,39 @@
            (roster/departures {"a" {:messages [{:message "m"}]} "b" {:messages []} "c" {:data {:messages [1]}}}
                               {"c" {}}))
         "only agents that left with messages are departures")))
+
+(deftest a-ling-carries-its-plan-progress-and-spend
+  (let [ling {:slave/id "l1" :slave/depth 1 :slave/status :working}]
+    (is (= {:agent/progress {:done 2 :total 5} :agent/cost-usd 0.5}
+           (select-keys (roster/slave->agent (assoc ling :ling/progress {:done 2 :total 5} :ling/cost-usd 1/2))
+                        [:agent/progress :agent/cost-usd])))
+    (testing "no plan, no spend: neither key appears"
+      (is (= #{:agent/id :agent/name :agent/status :agent/kind}
+             (set (keys (roster/slave->agent (assoc ling :ling/progress {:done 0 :total 0} :ling/cost-usd nil)))))))
+    (testing "done is clamped into the plan; bad spend is dropped"
+      (is (= {:done 3 :total 3} (roster/progress-of {:done 9 :total 3})))
+      (is (= {:done 0 :total 3} (roster/progress-of {:done -1 :total 3})))
+      (is (= {:done 0 :total 3} (roster/progress-of {:total 3})))
+      (is (nil? (roster/progress-of nil)))
+      (is (nil? (roster/cost-of -0.01)))
+      (is (nil? (roster/cost-of ##NaN)))
+      (is (nil? (roster/cost-of "0.3"))))
+    (testing "an exited agent keeps what it had spent"
+      (is (= 0.25 (:agent/cost-usd (roster/exited-agent (roster/slave->agent (assoc ling :ling/cost-usd 0.25))
+                                                        {:event-type :completed :timestamp 1} 2)))))
+    (is (m/validate s/Roster (roster/agents [(assoc ling :ling/progress {:done 1 :total 4} :ling/cost-usd 3)])))))
+
+(hst/deftrifecta-from-schema progress-of
+  hive-olympus.roster/progress-of
+  {:in [:map [:done [:maybe [:int {:min -3 :max 30}]]] [:total [:int {:min -1 :max 20}]]]
+   :out [:maybe s/Progress]
+   :rel (fn [{:keys [done total]} out]
+          (if (pos? total)
+            (and (= total (:total out))
+                 (<= 0 (:done out) total)
+                 (or (not (integer? done)) (not (<= 0 done total)) (= done (:done out))))
+            (nil? out)))
+   :classify (fn [_ out] (if out :plan :no-plan))
+   :classify-domain #{:plan :no-plan}
+   :classify-floor 2
+   :num-tests 60})
