@@ -38,10 +38,34 @@
 (defn- present [s]
   (when-not (str/blank? s) s))
 
+(def bar-width
+  "Cells in a progress bar."
+  10)
+
+(defn progress-text
+  "\"3/5 (60%)\" for PROGRESS, or nil."
+  [{:keys [done total]}]
+  (when (and total (pos? total))
+    (str done "/" total " (" (quot (* 100 done) total) "%)")))
+
+(defn progress-bar
+  "\"[######----] 3/5\" for PROGRESS, or nil; full only when complete."
+  [{:keys [done total]}]
+  (when (and total (pos? total))
+    (let [filled (quot (* bar-width done) total)]
+      (str "[" (apply str (repeat filled \#)) (apply str (repeat (- bar-width filled) \-)) "] "
+           done "/" total))))
+
+(defn cost-text
+  "\"$0.0123\" under a dollar, \"$4.20\" from one up, or nil."
+  [cost]
+  (when (number? cost)
+    (String/format java.util.Locale/ROOT (if (< cost 1.0) "$%.4f" "$%.2f") (object-array [(double cost)]))))
+
 (defn agent-fields
   "The [label value] rows AGENT can fill, in reading order; absent facts are
    omitted rather than shown empty."
-  [{:agent/keys [id mode project parent drones done task activity seen] :as agent}]
+  [{:agent/keys [id mode project parent drones done progress cost-usd task activity seen] :as agent}]
   (->> [["id" id]
         ["model" (model/route agent)]
         ["mode" mode]
@@ -49,6 +73,8 @@
         ["ling" parent]
         ["drones" (some-> drones str)]
         ["done" (when (and done (pos? done)) (str done))]
+        ["progress" (progress-text progress)]
+        ["cost" (cost-text cost-usd)]
         ["task" task]
         ["activity" activity]
         ["seen" seen]]
@@ -56,22 +82,27 @@
        vec))
 
 (defn cell-blocks
-  "Blocks for one grid cell: heading, toned status para, fields."
+  "Blocks for one grid cell: heading, toned status para, progress bar when
+   the agent has a plan, fields."
   [{:cell/keys [row col agent focused?]}]
-  (let [{:agent/keys [id name status kind exited?]} agent]
-    [{:block/type :heading
-      :level 2
-      :text (str (when focused? "> ")
-                 (if (str/blank? name) id name)
-                 (when (= :drone kind) "  (drone)"))}
-     {:block/type :para
-      :text (str (clojure.core/name status)
-                 (when exited? "  (exited)")
-                 (when focused? "  (focused)"))
-      :tone (status-tone status)}
-     {:block/type :fields
-      :fields (conj (agent-fields agent)
-                    ["cell" (str "row " (inc row) ", col " (inc col))])}]))
+  (let [{:agent/keys [id name status kind exited? progress]} agent
+        bar (progress-bar progress)]
+    (cond-> [{:block/type :heading
+              :level 2
+              :text (str (when focused? "> ")
+                         (if (str/blank? name) id name)
+                         (when (= :drone kind) "  (drone)"))}
+             {:block/type :para
+              :text (str (clojure.core/name status)
+                         (when exited? "  (exited)")
+                         (when focused? "  (focused)"))
+              :tone (status-tone status)}]
+      bar (conj {:block/type :para
+                 :text bar
+                 :tone (if (= (:done progress) (:total progress)) :success :info)})
+      true (conj {:block/type :fields
+                  :fields (conj (agent-fields agent)
+                                ["cell" (str "row " (inc row) ", col " (inc col))])}))))
 
 (defn routes-text
   "\"routes: venice/deepseek-v4-flash x2, axon/glm-5.3\" for ROUTES, or nil."
