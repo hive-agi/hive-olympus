@@ -31,7 +31,8 @@
             [hive-vessel.renderer :as renderer]
             [hive-olympus.lens :as lens]
             [hive-olympus.tool :as olympus-tool]
-            [hive-olympus.transcript :as transcript])
+            [hive-olympus.transcript :as transcript]
+            [hive-olympus.changes :as changes])
   (:import (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit)))
 
 (def addon-id-value "hive.olympus")
@@ -158,19 +159,35 @@
        (long refresh-ms) (long refresh-ms) TimeUnit/MILLISECONDS))
     executor))
 
-(defn- request-refresh! [state]
+(defn- request-refresh!
+  "Queue one repaint `changes/debounce-ms` from now. Requests arriving while
+   one is queued are absorbed by it, so a burst costs one refresh."
+  [state]
   (let [{:keys [executor refresh-pending]} @state]
     (when (and executor refresh-pending (compare-and-set! refresh-pending false true))
       (try
-        (.execute ^ScheduledExecutorService executor
-                  (fn []
-                    (reset! refresh-pending false)
-                    (locking state
-                      (when (and (= :active (:lifecycle @state))
-                                 (identical? executor (:executor @state)))
-                        (refresh-locked! state)))))
+        (.schedule ^ScheduledExecutorService executor
+                   ^Runnable (fn []
+                               (reset! refresh-pending false)
+                               (locking state
+                                 (when (and (= :active (:lifecycle @state))
+                                            (identical? executor (:executor @state)))
+                                   (refresh-locked! state))))
+                   (long changes/debounce-ms) TimeUnit/MILLISECONDS)
         (catch java.util.concurrent.RejectedExecutionException _
           (reset! refresh-pending false))))))
+
+(defn- subscribe-changes!
+  "Push subscription for STATE's repaints: CONFIG's :olympus/subscribe-fn
+   (fn [key on-change] -> close fn), else the host swarm's change source
+   when the roster is the live adapter. Returns the close fn or nil (poll)."
+  [state config]
+  (let [key (keyword "hive-olympus.addon" (str "refresh-" (System/identityHashCode state)))
+        on-change (fn [] (request-refresh! state))]
+    (if-let [f (:olympus/subscribe-fn config)]
+      (f key on-change)
+      (when-not (contains? config :olympus/roster-fn)
+        (changes/subscribe! key on-change)))))
 
 (defn- start! [state seed runtime-config]
   (locking state
@@ -178,13 +195,12 @@
       {:success? true :already-initialized? true}
       (try
         (let [config (merge seed runtime-config)
-              refresh-ms (long (or (:olympus/refresh-ms config) default-refresh-ms))
+              poll-ms (long (or (:olympus/refresh-ms config) default-refresh-ms))
               warn! (fn [msg] (swap! state assoc :roster-warning msg))
               renderer-source (or (:vessel/renderers config) renderer/renderers)
               renderer-watch (Object.)
               seat (presenter/create)]
           (reset! state {:lifecycle :active
-                         :refresh-ms refresh-ms
                          :roster-fn (roster-fn-of config warn!)
                          :transcript-port (transcript-port-of config)
                          :olympus (atom model/initial-state)
@@ -196,7 +212,10 @@
                          :registered-renderers {}
                          :roster []
                          :panels (view/panels (model/grid-model [] model/initial-state))})
-          (swap! state assoc :executor (start-loop state refresh-ms))
+          (let [close-push (subscribe-changes! state config)
+                refresh-ms (changes/tick-ms config (some? close-push) poll-ms)]
+            (swap! state assoc :close-push close-push :pushed? (some? close-push)
+                   :refresh-ms refresh-ms :executor (start-loop state refresh-ms)))
           (when (get config :olympus/operator-room?
                      (or (contains? config :olympus/operator-sources)
                          (not (contains? config :olympus/roster-fn))))
@@ -206,11 +225,13 @@
                      (fn [_ _ before after]
                        (when (not= before after) (request-refresh! state))))
           (refresh-locked! state)
-          {:success? true :metadata {:refresh-ms refresh-ms
+          {:success? true :metadata {:refresh-ms (:refresh-ms @state)
+                                     :pushed? (:pushed? @state)
                                      :agents (count (:roster @state))}})
         (catch Throwable t
           (when-let [source (:renderer-source @state)]
             (remove-watch source (:renderer-watch @state)))
+          (when-let [close (:close-push @state)] (close))
           (when-let [close (get-in @state [:operator-room :close])] (close))
           (when-let [executor (:executor @state)]
             (.shutdownNow ^ScheduledExecutorService executor))
@@ -219,6 +240,7 @@
 
 (defn- stop! [state]
   (let [^ScheduledExecutorService executor (:executor @state)]
+    (when-let [close (:close-push @state)] (close))
     (when-let [source (:renderer-source @state)]
       (remove-watch source (:renderer-watch @state)))
     (when executor
@@ -227,7 +249,7 @@
     (locking state
       (when-let [close (get-in @state [:operator-room :close])] (close))
       (when-let [close (some-> (:roster-fn @state) meta :olympus/close)]
-        (try (close) (catch Throwable _ nil)))
+        (try (close) (catch Throwable _best-effort-close nil)))
       (reset! state {:lifecycle :stopped})
       nil)))
 

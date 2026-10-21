@@ -131,6 +131,29 @@
     (Thread/sleep 120)
     (is (= 2 (count @calls)) "no delivery after shutdown")))
 
+(deftest a-pushed-change-repaints-without-waiting-for-the-tick
+  (let [roster (atom (t/agents 1))
+        subscribed (promise)
+        closed (promise)
+        subscribe (fn [k on-change] (deliver subscribed on-change) #(deliver closed true))
+        [a _] (started roster {:olympus/refresh-ms 25
+                               :olympus/idle-refresh-ms 600000
+                               :olympus/subscribe-fn subscribe})
+        h (addon/hooks a)
+        [calls target] (t/recorder)
+        pushed (deref subscribed 1000 nil)]
+    (is (= 600000 (get-in (addon/health a) [:details :refresh-ms]))
+        "a push source slows the tick to the idle period")
+    ((:olympus/register-presenter! h) "p" target)
+    (reset! roster (t/agents 6))
+    (dotimes [_ 5] (pushed))
+    (is (t/eventually #(= 2 (count @calls)) 2000) "the pushed burst repaints")
+    (reset! roster (t/agents 12))
+    ((:olympus/refresh! h))
+    (is (= 3 (count @calls)) "the burst of five cost one refresh, not five")
+    (addon/shutdown! a)
+    (is (deref closed 1000 false) "shutdown closes the push subscription")))
+
 (deftest roster-fn-may-be-named-by-symbol
   (let [a (sut/addon-ctor {:olympus/refresh-ms 0
                            :olympus/roster-fn 'hive-olympus.addon-test/two-agents})]
