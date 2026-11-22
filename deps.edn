@@ -23,6 +23,6 @@
          :jvm-opts ["-Xmx1g"]
          :main-opts ["-m" "hive-olympus.test-runner"]}
 
-  :build {:deps {io.github.hive-agi/hive-build {:mvn/version "0.3.1"}}
+  :build {:deps {io.github.hive-agi/hive-build {:mvn/version "0.3.3"}}
           :jvm-opts ["-Xmx1g"]
           :ns-default hive-build.api}}}
